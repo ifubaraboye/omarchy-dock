@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "macos.dock",
+  "name": "macOS-style Dock",
+  "version": "0.1.0",
+  "description": "A compact, glassy application dock for Omarchy.",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "DockPanel.qml"
+  }
+}

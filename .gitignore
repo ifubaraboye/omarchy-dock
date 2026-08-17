@@ -1,0 +1,11 @@
+.DS_Store
+*.swp
+*.swo
+
+# Local test/runtime state
+.qmlcache/
+*.log
+
+# Downloaded user icon cache should remain outside the repository.
+icons/
+dock-icons.json

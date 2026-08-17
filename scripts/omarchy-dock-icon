@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+user_home="${HOME:?HOME is not set}"
+icon_dir="$user_home/.config/omarchy/icons"
+map_file="$user_home/.config/omarchy/dock-icons.json"
+command_name="${0##*/}"
+
+die() { printf '%s\n' "$command_name: $*" >&2; exit 1; }
+usage() {
+  cat <<'EOF'
+Usage:
+  omarchy-dock-icon set <app-id> <macosicons-page-or-image-url>
+  omarchy-dock-icon set <app-id> --file <local-image>
+  omarchy-dock-icon clear <app-id>
+  omarchy-dock-icon list
+  omarchy-dock-icon folder
+EOF
+}
+
+require_tools() {
+  command -v python3 >/dev/null || die "python3 is required"
+  command -v curl >/dev/null || die "curl is required"
+  command -v magick >/dev/null || command -v convert >/dev/null || die "ImageMagick is required"
+  command -v identify >/dev/null || die "ImageMagick identify is required"
+}
+
+canonical_id() {
+  local value="$1"
+  value="${value%.desktop}"
+  [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid app id: $1"
+  printf '%s' "$value"
+}
+
+extract_image_url() {
+  local html_file="$1" source="$2"
+  python3 - "$html_file" "$source" <<'PY'
+import html, re, sys
+
+page = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+source = sys.argv[2]
+urls = re.findall(r'https://[^"\'<>\s]+?\.(?:png|webp)(?:\?[^"\'<>\s]*)?', page)
+urls = [html.unescape(url.replace("\\/", "/")) for url in urls]
+
+def useful(url):
+    return "/parse/" in url and "low_res_" not in url and "lowResPng" not in url
+
+preferred = [url for url in urls if useful(url) and (re.search(r"(?:^|[_-])ios(?:[_-]|$)", url, re.I) or source.lower() in url.lower())]
+fallback = [url for url in urls if useful(url)]
+if not fallback:
+    fallback = [url for url in urls if "/parse/" in url and "low_res_" not in url]
+if preferred:
+    print(preferred[0])
+elif fallback:
+    print(fallback[0])
+else:
+    raise SystemExit("no downloadable image URL found on page")
+PY
+}
+
+round_icon() {
+  local source="$1" destination="$2" tool width height radius masked
+  if command -v magick >/dev/null; then tool="magick"; else tool="convert"; fi
+  # Remove transparent padding so icons with a small painted logo do not
+  # appear smaller than the rest of the dock.
+  "$tool" "$source" -trim +repage "$destination"
+  width="$(identify -format '%w' "$destination")"
+  height="$(identify -format '%h' "$destination")"
+  radius=$(( (width < height ? width : height) * 22 / 100 ))
+  masked="${destination}.masked"
+  "$tool" "$destination" -alpha on \
+    \( -size "${width}x${height}" xc:none -fill white \
+       -draw "roundrectangle 0,0 $((width - 1)),$((height - 1)) $radius,$radius" \) \
+    -compose DstIn -composite "$masked"
+  mv -f -- "$masked" "$destination"
+}
+
+write_mapping() {
+  local app_id="$1" filename="$2" source="$3" image_url="$4"
+  mkdir -p "$(dirname "$map_file")"
+  python3 - "$map_file" "$app_id" "$filename" "$source" "$image_url" <<'PY'
+import json, os, sys, tempfile
+
+path, app_id, filename, source, image_url = sys.argv[1:]
+try:
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        data = {}
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+
+data[app_id] = {
+    "file": filename,
+    "source": source,
+    "imageUrl": image_url,
+}
+directory = os.path.dirname(path) or "."
+fd, temporary = tempfile.mkstemp(prefix=".dock-icons.", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(temporary, path)
+except Exception:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+}
+
+set_icon() {
+  local app_id input source image_url temporary filename
+  app_id="$(canonical_id "$1")"
+  input="$2"
+  mkdir -p "$icon_dir"
+  temporary="$(mktemp "$icon_dir/.${app_id}.XXXXXX")"
+  trap 'rm -f "$temporary"' RETURN
+
+  if [[ "$input" == "--file" ]]; then
+    [[ -f "$3" ]] || die "image file not found: $3"
+    source="file:$3"
+    image_url=""
+    cp -- "$3" "$temporary"
+  else
+    source="$input"
+    if [[ "$input" =~ ^https?://s3-new\.macosicons\.com/ ]]; then
+      image_url="$input"
+    else
+      if [[ "$input" =~ ^https?://macosicons\.com/ ]]; then
+        source="$input"
+      elif [[ "$input" =~ ^https?:// ]]; then
+        die "unsupported URL; use a macosicons page or direct CDN image URL"
+      else
+        source="https://macosicons.com/icon/$input"
+      fi
+      local page_file
+      page_file="$(mktemp)"
+      trap 'rm -f "$temporary" "$page_file"' RETURN
+      curl -fL --retry 2 --connect-timeout 10 --max-time 30 -o "$page_file" "$source"
+      image_url="$(extract_image_url "$page_file" "$input")"
+    fi
+    curl -fL --retry 2 --connect-timeout 10 --max-time 60 -o "$temporary" "$image_url"
+  fi
+
+  python3 - "$temporary" <<'PY'
+import sys
+data = open(sys.argv[1], "rb").read(16)
+if not (data.startswith(b"\x89PNG\r\n\x1a\n") or data.startswith(b"RIFF") and data[8:12] == b"WEBP"):
+    raise SystemExit("downloaded file is not a PNG or WebP image")
+PY
+
+  local rounded
+  rounded="$(mktemp "$icon_dir/.${app_id}.rounded.XXXXXX.png")"
+  trap 'rm -f "$temporary" "$rounded"' RETURN
+  round_icon "$temporary" "$rounded"
+  filename="$app_id.png"
+  mv -f -- "$rounded" "$icon_dir/$filename"
+  write_mapping "$app_id" "$filename" "$source" "$image_url"
+  trap - RETURN
+  printf 'Set custom icon for %s\n' "$app_id"
+}
+
+clear_icon() {
+  local app_id="$1" filename
+  app_id="$(canonical_id "$app_id")"
+  filename="$(python3 - "$map_file" "$app_id" <<'PY'
+import json, os, sys, tempfile
+path, app_id = sys.argv[1:]
+try:
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+entry = data.pop(app_id, None) if isinstance(data, dict) else None
+directory = os.path.dirname(path) or "."
+if isinstance(data, dict):
+    fd, temporary = tempfile.mkstemp(prefix=".dock-icons.", dir=directory, text=True)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(temporary, path)
+if isinstance(entry, dict):
+    print(entry.get("file", ""))
+elif isinstance(entry, str):
+    print(entry)
+PY
+)"
+  if [[ -n "$filename" && "$filename" != */* ]]; then rm -f -- "$icon_dir/$filename"; fi
+  printf 'Cleared custom icon for %s\n' "$app_id"
+}
+
+list_icons() {
+  python3 - "$map_file" "$user_home/.config/omarchy/dock-pinned-macos.json" <<'PY'
+import json, os, sys
+map_path, pins_path = sys.argv[1:]
+def load(path, fallback):
+    try:
+        with open(path, encoding="utf-8") as handle: return json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError): return fallback
+icons = load(map_path, {})
+pins = load(pins_path, {})
+pinned = pins.get("pinned", []) if isinstance(pins, dict) else pins
+for app_id in pinned:
+    entry = icons.get(str(app_id), {}) if isinstance(icons, dict) else {}
+    filename = entry.get("file", "") if isinstance(entry, dict) else entry
+    print(f"{app_id}: {filename or 'default icon'}")
+PY
+}
+
+require_tools
+case "${1:-}" in
+  set)
+    [[ $# -ge 3 ]] || { usage; exit 2; }
+    if [[ "$3" == "--file" ]]; then
+      [[ $# -eq 4 ]] || { usage; exit 2; }
+      set_icon "$2" "$3" "$4"
+    else
+      [[ $# -eq 3 ]] || { usage; exit 2; }
+      set_icon "$2" "$3"
+    fi
+    ;;
+  clear) [[ $# -eq 2 ]] || { usage; exit 2; }; clear_icon "$2" ;;
+  list) [[ $# -eq 1 ]] || { usage; exit 2; }; list_icons ;;
+  folder) [[ $# -eq 1 ]] || { usage; exit 2; }; mkdir -p "$icon_dir"; xdg-open "$icon_dir" >/dev/null 2>&1 & ;;
+  *) usage; exit 2 ;;
+esac
