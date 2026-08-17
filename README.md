@@ -28,6 +28,34 @@ Enable `macos.dock` through Omarchy's normal plugin configuration. The dock stor
 ~/.config/omarchy/dock-pinned-macos.json
 ```
 
+## Requirements and removal
+
+This plugin requires Omarchy with Quickshell, plus `bash`, `curl`, `python3`,
+ImageMagick (`magick` or `convert` and `identify`), and `xdg-open` for the
+optional custom-icon helper.
+
+To remove the plugin, disable it and delete its installed directory:
+
+```bash
+omarchy plugin disable macos.dock
+rm -rf ~/.config/omarchy/plugins/macos.dock
+omarchy restart shell
+```
+
+The plugin does not overwrite existing Omarchy or user configuration files.
+It only creates or updates its own files under `~/.config/omarchy/` after the
+user explicitly invokes a dock action or the custom-icon helper. Custom icon
+files and mappings can be removed with `omarchy-dock-icon clear <app-id>`.
+
+The repository author owns this plugin and has permission to submit the source
+code and preview assets. External icons downloaded from macOSicons remain
+subject to their respective rights and terms; users should only use assets
+they are permitted to use.
+
+Plugin-directory approval is for listing in the Omarchy plugin directory and
+is not a security review or endorsement. Review the source and dependencies
+before installing.
+
 ## Custom icons
 
 Use the helper to assign an icon from macOSicons, a direct image URL, or a
