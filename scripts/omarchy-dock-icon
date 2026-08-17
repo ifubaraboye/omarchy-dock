@@ -145,12 +145,14 @@ set_icon() {
     curl -fL --retry 2 --connect-timeout 10 --max-time 60 -o "$temporary" "$image_url"
   fi
 
-  python3 - "$temporary" <<'PY'
-import sys
-data = open(sys.argv[1], "rb").read(16)
-if not (data.startswith(b"\x89PNG\r\n\x1a\n") or data.startswith(b"RIFF") and data[8:12] == b"WEBP"):
-    raise SystemExit("downloaded file is not a PNG or WebP image")
-PY
+  # Validate the downloaded asset as an image. The downloaded bytes are never
+  # passed to a shell or interpreter; ImageMagick only inspects the file type.
+  local image_format
+  image_format="$(identify -format '%m' "$temporary" 2>/dev/null || true)"
+  case "$image_format" in
+    PNG|WEBP) ;;
+    *) die "downloaded file is not a valid PNG or WebP image" ;;
+  esac
 
   local rounded
   rounded="$(mktemp "$icon_dir/.${app_id}.rounded.XXXXXX.png")"
