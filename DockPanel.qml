@@ -45,6 +45,11 @@ Item {
   property string pendingCursorPosition: ""
   property var customIcons: ({})
   property int customIconRevision: 0
+  property var nativeIconCache: ({})
+  property var nativeIconPending: ({})
+  property var nativeIconQueue: []
+  property var currentNativeIconJob: null
+  property int nativeIconRevision: 0
 
   IpcHandler {
     target: "macos.dock"
@@ -139,6 +144,8 @@ Item {
     if (!cursorCaptureProcess.running) cursorCaptureProcess.running = true
     return true
   }
+
+  onShellChanged: if (root.shell) root.refreshApps()
 
   function refreshApps() {
     if (!root.shell || !root.shell.appLibrary) return
@@ -342,20 +349,69 @@ Item {
   }
 
   function iconSourceFor(item) {
+    // Touch the revision so the DockItem override binding re-evaluates once a
+    // native icon finishes normalization below.
+    var nativeRevision = root.nativeIconRevision
     var customSource = root.customIconSourceFor(item)
     if (customSource) return customSource
     var entry = DockModel.entryFor(item && item.id, root.appEntries)
     var iconName = entry.icon || entry.iconName || entry.appIcon || ""
     if (root.shell && root.shell.appLibrary && iconName && typeof root.shell.appLibrary.iconSource === "function") {
       var resolved = root.shell.appLibrary.iconSource(iconName)
-      if (resolved && String(resolved).indexOf("application-x-executable") === -1) return resolved
+      if (resolved && String(resolved).indexOf("application-x-executable") === -1)
+        return root.nativeIconSourceFor(resolved)
       var fallbackName = IconResolver.resolveIcon(entry)
       if (fallbackName && fallbackName !== iconName) {
         resolved = root.shell.appLibrary.iconSource(fallbackName)
-        if (resolved && String(resolved).indexOf("application-x-executable") === -1) return resolved
+        if (resolved && String(resolved).indexOf("application-x-executable") === -1)
+          return root.nativeIconSourceFor(resolved)
       }
     }
     return ""
+  }
+
+  // Theme icons carry their own transparent margin (often only 70-95% painted
+  // area), so they render visibly smaller than the full-bleed macOS custom
+  // icons. Normalize native file-backed icons through the same trim + rounded
+  // corner pipeline as the custom icons, cached in the icon directory.
+  function nativeIconSourceFor(resolved) {
+    var url = String(resolved || "")
+    if (url.indexOf("file://") !== 0) return url
+    var srcPath = url.slice(7)
+    var hash = (DockModel.hashContent(srcPath) >>> 0).toString(36)
+    var target = root.iconDir + "/.native-" + hash + ".png"
+    if (root.nativeIconCache[hash] === target) return Util.fileUrl(target)
+    if (!root.nativeIconPending[hash]) {
+      root.nativeIconPending[hash] = true
+      root.nativeIconQueue.push({ hash: hash, src: srcPath, target: target })
+      if (!nativeIconProcess.running) root.pumpNativeIconQueue()
+    }
+    return url
+  }
+
+  function nativeIconCommand(srcPath, targetPath) {
+    var src = Util.shellQuote(srcPath)
+    var target = Util.shellQuote(targetPath)
+    var dir = Util.shellQuote(root.iconDir)
+    return "mkdir -p " + dir
+      + "; tool=magick; command -v magick >/dev/null 2>&1 || tool=convert"
+      + "; if [ -f " + target + " ]; then exit 0; fi"
+      + "; tmp=$(mktemp --suffix=.png); trap 'rm -f \"$tmp\"' EXIT"
+      + "; \"$tool\" " + src + " -resize 512x512 -trim +repage \"$tmp\""
+      + "; w=$(identify -format '%w' \"$tmp\"); h=$(identify -format '%h' \"$tmp\")"
+      + "; r=$(( (w < h ? w : h) * 22 / 100 ))"
+      + "; \"$tool\" \"$tmp\" -alpha on"
+      + " \\( -size \"${w}x${h}\" xc:none -fill white"
+      + " -draw \"roundrectangle 0,0 $((w-1)),$((h-1)) $r,$r\" \\)"
+      + " -compose DstIn -composite " + target
+  }
+
+  function pumpNativeIconQueue() {
+    if (!root.nativeIconQueue.length || nativeIconProcess.running) return
+    var job = root.nativeIconQueue.shift()
+    root.currentNativeIconJob = job
+    nativeIconProcess.command = ["bash", "-c", root.nativeIconCommand(job.src, job.target)]
+    nativeIconProcess.running = true
   }
 
   Timer { id: conflictNotice; interval: 30000 }
@@ -368,7 +424,7 @@ Item {
     watchChanges: true
     printErrors: false
     onLoaded: root.loadCustomIcons(text())
-    onFileChanged: root.loadCustomIcons(text())
+    onFileChanged: customIconsFile.reload()
     onLoadFailed: root.loadCustomIcons("{}")
   }
 
@@ -402,6 +458,22 @@ Item {
     id: renameProcess
     command: ["mv", root.tempPinPath, root.pinPath]
     onExited: root.refreshItems()
+  }
+
+  Process {
+    id: nativeIconProcess
+    onExited: function(exitCode) {
+      var job = root.currentNativeIconJob
+      root.currentNativeIconJob = null
+      if (job) {
+        delete root.nativeIconPending[job.hash]
+        if (exitCode === 0) {
+          root.nativeIconCache[job.hash] = job.target
+          root.nativeIconRevision++
+        }
+      }
+      root.pumpNativeIconQueue()
+    }
   }
 
   Connections {
