@@ -34,6 +34,11 @@ This plugin requires Omarchy with Quickshell, plus `bash`, `curl`, `python3`,
 ImageMagick (`magick` or `convert` and `identify`), and `xdg-open` for the
 optional custom-icon helper.
 
+For the best experience, use **floating windows** (not tiling): the dock is
+designed to work with a floating layout where windows overlap its surface, and
+it behaves best when windows are allowed to float over it rather than being
+tiled up to its edges.
+
 To remove the plugin, disable it and delete its installed directory:
 
 ```bash
