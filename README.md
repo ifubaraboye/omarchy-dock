@@ -16,13 +16,14 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 
 ## Install
 
-Copy this directory to:
+Add and enable the plugin through Omarchy's plugin manager:
 
-```text
-~/.config/omarchy/plugins/macos.dock
+```bash
+omarchy plugin add https://github.com/ifubaraboye/omarchy-dock.git
+omarchy plugin enable ifubaraboye.dock
 ```
 
-Enable `macos.dock` through Omarchy's normal plugin configuration. The dock stores pins in:
+The dock stores pins in:
 
 ```text
 ~/.config/omarchy/dock-pinned-macos.json
@@ -42,8 +43,8 @@ tiled up to its edges.
 To remove the plugin, disable it and delete its installed directory:
 
 ```bash
-omarchy plugin disable macos.dock
-rm -rf ~/.config/omarchy/plugins/macos.dock
+omarchy plugin disable ifubaraboye.dock
+rm -rf ~/.config/omarchy/plugins/ifubaraboye.dock
 omarchy restart shell
 ```
 
