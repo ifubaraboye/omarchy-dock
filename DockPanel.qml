@@ -200,7 +200,7 @@ Item {
       if (match)
         Hyprland.dispatch("hl.dsp.cursor.move({ x = " + match[1] + ", y = " + match[2] + " })")
       root.pendingCursorPosition = ""
-      Quickshell.execDetached(["hyprctl", "keyword", "cursor:no_warps", "false"])
+      Quickshell.execDetached(["hyprctl", "eval", "hl.config({ cursor = { no_warps = false } })"])
     }
   }
 
@@ -218,7 +218,7 @@ Item {
 
   Process {
     id: focusNoWarpProcess
-    command: ["hyprctl", "keyword", "cursor:no_warps", "true"]
+    command: ["hyprctl", "eval", "hl.config({ cursor = { no_warps = true } })"]
     onExited: {
       if (!root.pendingFocusTarget) return
       var target = root.pendingFocusTarget
