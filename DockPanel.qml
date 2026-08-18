@@ -19,6 +19,8 @@ Item {
   property string pinPath: home + "/.config/omarchy/dock-pinned-macos.json"
   property string tempPinPath: pinPath + ".tmp"
   property var pinnedIds: []
+  property var dockOrder: []
+  property bool pinFileLoaded: false
   property var appEntries: []
   property var runningIds: []
   property var dockItems: []
@@ -38,9 +40,6 @@ Item {
   property string hoveredItemId: ""
   property var tooltipItem: null
   property real tooltipCenterX: 0
-  property string draggingItemId: ""
-  property int draggingFromIndex: -1
-  property int draggingTargetIndex: -1
   property string pendingFocusTarget: ""
   property string pendingCursorPosition: ""
   property var customIcons: ({})
@@ -50,6 +49,26 @@ Item {
   property var nativeIconQueue: []
   property var currentNativeIconJob: null
   property int nativeIconRevision: 0
+
+  // Layout & drag state. The Repeater model (dockItems) is reassigned only
+  // when the item set changes; reorders go through applyLayout(), which only
+  // mutates existing delegates, so no delegate is ever torn down by dragging.
+  property int slotWidth: 58
+  property int slotSpacing: 8
+  property int sidePadding: 18
+  property int separatorWidth: 14
+  property string floatingId: ""
+  property var tempDrag: ({ id: "", index: -1 })
+  property var placements: ({})
+  property real layoutWidth: 0
+  property var visualCache: ({})
+  property var delegateById: ({})
+  property string ghostSource: ""
+  property real ghostX: 0
+  property real ghostY: 0
+  property real ghostScale: 1.18
+  property real ghostOpacity: 1
+  property bool ghostSettling: false
 
   IpcHandler {
     target: "macos.dock"
@@ -163,7 +182,87 @@ Item {
 
   function refreshItems() {
     root.runningIds = normalizeRunning()
-    root.dockItems = DockModel.buildDockItems(root.pinnedIds, root.appEntries, root.runningIds)
+    // The session order is authoritative: it preserves drag rearrangements of
+    // any app (pinned or running) while dropping apps that closed and
+    // appending newly opened ones. Pinned apps stay pinned; running apps are
+    // never promoted into the pinned list by dragging.
+    var prevOrder = root.dockOrder.join("|")
+    root.dockOrder = DockModel.reconcileDockOrder(root.dockOrder, root.pinnedIds, root.runningIds)
+    // The layout file mirrors the session order; persist it (debounced) when
+    // the order changes so a restart restores the exact interleaving. Wait
+    // until the pin file has been read so a slow boot never clobbers it.
+    if (root.pinFileLoaded && root.dockOrder.join("|") !== prevOrder)
+      persistTimer.restart()
+    // Reassign the Repeater model only when the set of items actually changed
+    // (apps opened/closed, pinned toggled, pin file reloaded). A pure reorder
+    // must never touch the model: reassigning a JS array model destroys and
+    // recreates every delegate, which flashes the whole dock. Delegate
+    // positions are driven by placements[id] in applyLayout(), so the model's
+    // order is irrelevant to rendering.
+    if (!root.floatingId) {
+      var newItems = DockModel.buildOrderedItems(root.dockOrder, root.pinnedIds, root.appEntries, root.runningIds)
+      if (!root.sameItemSet(newItems, root.dockItems))
+        root.dockItems = newItems
+    }
+    root.applyLayout()
+  }
+
+  function sameItemSet(a, b) {
+    if (a.length !== b.length) return false
+    for (var i = 0; i < a.length; i++) {
+      var found = false
+      for (var j = 0; j < b.length; j++) {
+        if (a[i].id === b[j].id && a[i].pinned === b[j].pinned) { found = true; break }
+      }
+      if (!found) return false
+    }
+    return true
+  }
+
+  function cursorXInRow() {
+    if (root.hoveredMouseX < 0) return -1
+    return dockRow.mapFromItem(null, root.hoveredMouseX, 0).x
+  }
+
+  function registerItem(id, item) { root.delegateById[id] = item }
+  function unregisterItem(id) { delete root.delegateById[id] }
+
+  // New delegates seed their animated properties from the item's last visual
+  // state so a structural rebuild never pops.
+  function seedFor(id) {
+    var cached = root.visualCache[id]
+    if (cached) return cached
+    var p = root.placements[id]
+    return { x: p ? p.x : 0, scale: p ? p.scale : 1, lift: p ? p.lift : 0 }
+  }
+
+  function applyLayout() {
+    var cursorX = root.cursorXInRow()
+    var baseFlow = DockModel.buildFlow(root.dockOrder, [], "", -1)
+    if (root.floatingId && cursorX >= 0)
+      root.tempDrag.index = DockModel.insertionIndexFor(cursorX, baseFlow, DockModel.LAYOUT_OPTS)
+    var flow = DockModel.buildFlow(
+      root.dockOrder,
+      [],
+      root.floatingId,
+      root.floatingId ? root.tempDrag.index : -1
+    )
+    var result = DockModel.computeLayout(flow, cursorX, DockModel.LAYOUT_OPTS)
+    root.placements = result.placements
+    root.layoutWidth = result.totalWidth
+    for (var id in result.placements) {
+      var p = result.placements[id]
+      var d = root.delegateById[id]
+      if (!d) continue
+      d.x = p.x
+      d.targetScale = p.scale
+      d.targetLift = p.lift
+      d.targetOpacity = (id === root.floatingId) ? 0 : (p.phantom ? 0.45 : 1)
+    }
+    // The dragged item is excluded from the flow so it has no placement; hide
+    // its dock copy while the ghost follows the cursor.
+    if (root.floatingId && root.delegateById[root.floatingId])
+      root.delegateById[root.floatingId].targetOpacity = 0
   }
 
   function checkDockConflict() {
@@ -237,7 +336,7 @@ Item {
   }
 
   function savePinned() {
-    var content = DockModel.serializePinned(root.pinnedIds)
+    var content = DockModel.serializePinned(root.pinnedIds, root.dockOrder)
     DockModel.markWritten(content)
     tempWriter.path = root.tempPinPath
     tempWriter.setText(content)
@@ -271,54 +370,106 @@ Item {
     } catch (error) {}
   }
 
-  function finishDrag(item, position) {
-    if (!item || !item.pinned) return
-    var fromIndex = root.pinnedIds.indexOf(item.id)
-    if (fromIndex < 0 || root.pinnedIds.length < 2) { root.clearDragState(); return }
-
-    var localX = dockRow.mapFromItem(null, position.x, position.y).x
-    var slotWidth = 58 + dockRow.spacing
-    var targetIndex = Math.round((localX - 30) / slotWidth)
-    targetIndex = Math.max(0, Math.min(root.pinnedIds.length - 1, targetIndex))
-    if (targetIndex === fromIndex) { root.clearDragState(); return }
-
-    root.pinnedIds = DockModel.reorderPinned(root.pinnedIds, fromIndex, targetIndex)
-    root.refreshItems()
-    root.savePinned()
-    root.clearDragState()
-  }
-
-  function clearDragState() {
-    root.draggingItemId = ""
-    root.draggingFromIndex = -1
-    root.draggingTargetIndex = -1
-  }
-
-  function dragTargetFor(position) {
-    var localX = dockRow.mapFromItem(null, position.x, position.y).x
-    var slotWidth = 58 + dockRow.spacing
-    return Math.max(0, Math.min(root.pinnedIds.length - 1, Math.round((localX - 30) / slotWidth)))
-  }
-
-  function updateDrag(item, position) {
-    if (!item || !item.pinned) return
-    if (root.draggingItemId !== item.id) {
-      root.draggingItemId = item.id
-      root.draggingFromIndex = root.pinnedIds.indexOf(item.id)
+  // Drag controller ---------------------------------------------------------
+  function onDragMoved(item, position) {
+    if (!root.floatingId) {
+      root.floatingId = item.id
+      root.tempDrag = { id: item.id, index: -1 }
+      root.ghostSource = root.iconSourceFor(item)
+      root.ghostScale = 1.18
+      root.ghostOpacity = 1
+      root.tooltipVisible = false
+      root.tooltipItem = null
     }
-    root.draggingTargetIndex = root.dragTargetFor(position)
+    root.hoveredMouseX = position.x
+    var cursor = dockRow.mapFromItem(null, position.x, position.y)
+    var baseFlow = DockModel.buildFlow(root.dockOrder, [], "", -1)
+    root.tempDrag.index = DockModel.insertionIndexFor(cursor.x, baseFlow, DockModel.LAYOUT_OPTS)
+    root.ghostX = position.x - root.iconSize * root.ghostScale / 2
+    root.ghostY = position.y - root.iconSize * root.ghostScale / 2 - 30
+    root.applyLayout()
   }
 
-  function layoutShiftFor(id) {
-    var index = root.pinnedIds.indexOf(id)
-    if (index < 0 || root.draggingFromIndex < 0 || root.draggingTargetIndex < 0 || id === root.draggingItemId) return 0
-    var slot = 58 + dockRow.spacing
-    if (root.draggingFromIndex < root.draggingTargetIndex && index > root.draggingFromIndex && index <= root.draggingTargetIndex) return -slot
-    if (root.draggingFromIndex > root.draggingTargetIndex && index >= root.draggingTargetIndex && index < root.draggingFromIndex) return slot
-    return 0
+  function ghostSettleTo() {
+    root.ghostSettling = true
+    root.ghostScale = 0.4
+    root.ghostOpacity = 0
+    ghostHideTimer.restart()
+  }
+
+  function finishDrag(item, position) {
+    var id = item.id
+    if (!root.floatingId) return
+    // `cursor` is already in dockRow's local space (origin at the row's top
+    // left), so the row band is just [0, dockRow.height] with a vertical
+    // margin. Anchoring against `rowTop` here was comparing two points in the
+    // same space and collapsed to an absolute screen-Y check, which made any
+    // drop on a bottom-anchored dock count as "outside" (and unpin the item).
+    var cursor = dockRow.mapFromItem(null, position.x, position.y)
+    var flowWidth = root.layoutWidth - 2 * root.sidePadding
+    var inside = cursor.x >= -root.sidePadding && cursor.x <= flowWidth + root.sidePadding &&
+                 cursor.y >= -40 && cursor.y <= dockRow.height + 40
+    var wasPinned = root.pinnedIds.indexOf(id) !== -1
+    var persist = false
+
+    try {
+    if (inside) {
+      var baseFlow = DockModel.buildFlow(root.dockOrder, [], id, -1)
+      var idx = root.tempDrag.index
+      if (idx < 0) idx = baseFlow.length
+      // Reorder the session dock — never the pinned list. Dragging never
+      // promotes a running app into a persistent pin.
+      var newOrder = DockModel.moveInOrder(root.dockOrder, id, idx)
+      if (newOrder.join("|") !== root.dockOrder.join("|")) {
+        root.dockOrder = newOrder
+        // Snap the dropped delegate straight to its new slot. Without this the
+        // settle spring carries it the whole way from its old slot and swings
+        // back past the drop point before settling. The delegate is invisible
+        // (opacity 0) while floating, so the snap is seamless: it fades in
+        // exactly where the ghost is.
+        var dropFlow = DockModel.buildFlow(newOrder, [], "", -1)
+        var dropResult = DockModel.computeLayout(dropFlow, root.cursorXInRow(), DockModel.LAYOUT_OPTS)
+        var dropP = dropResult.placements[id]
+        var dropDelegate = root.delegateById[id]
+        if (dropP && dropDelegate) {
+          dropDelegate.animating = false
+          dropDelegate.x = dropP.x
+          dropDelegate.animating = true
+        }
+      }
+      if (wasPinned) {
+        // A pinned app moved: persist its new relative order among the other
+        // pinned apps only (running apps are never written to the pin file).
+        var newPinned = DockModel.orderPinned(newOrder, root.pinnedIds)
+        if (newPinned.join("|") !== root.pinnedIds.join("|")) {
+          root.pinnedIds = newPinned
+          persist = true
+        }
+      }
+    } else if (wasPinned) {
+      // Dragged out of the dock: the app loses its persistent slot but stays
+      // in the session order while it keeps running.
+      root.pinnedIds = DockModel.removePinned(root.pinnedIds, id)
+      persist = true
+    }
+
+    root.floatingId = ""
+    root.tempDrag = { id: "", index: -1 }
+    // Always rebuild so any window/app changes deferred while dragging apply.
+    root.refreshItems()
+    if (persist) persistTimer.restart()
+    root.ghostSettleTo()
+    } catch (error) {
+      console.warn("macos.dock finishDrag error", error)
+      root.floatingId = ""
+      root.tempDrag = { id: "", index: -1 }
+      root.refreshItems()
+      root.ghostSettleTo()
+    }
   }
 
   function showTooltip(item, show) {
+    if (root.floatingId) return
     if (show) {
       tooltipItem = item
       tooltipVisible = true
@@ -434,15 +585,19 @@ Item {
     watchChanges: true
     printErrors: false
     onLoaded: {
+      root.pinFileLoaded = true
       root.pinnedIds = DockModel.parsePinned(text(), DockModel.DEFAULT_PINNED)
+      root.dockOrder = DockModel.parseOrder(text(), root.dockOrder)
       root.refreshItems()
     }
     onFileChanged: {
       if (!DockModel.shouldReprocess(text())) return
       root.pinnedIds = DockModel.parsePinned(text(), root.pinnedIds)
+      root.dockOrder = DockModel.parseOrder(text(), root.dockOrder)
       root.refreshItems()
     }
     onLoadFailed: {
+      root.pinFileLoaded = true
       root.pinnedIds = DockModel.DEFAULT_PINNED.slice()
       root.refreshItems()
     }
@@ -508,12 +663,12 @@ Item {
     anchors { top: true; bottom: true; left: true; right: true }
     mask: Region { item: dockSurface }
 
-      Rectangle {
+    Rectangle {
       id: dockSurface
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
       anchors.bottomMargin: root.autoHide && !root.enabled ? -root.dockHeight + 14 : root.bottomMargin
-      width: dockRow.width + 36
+      width: root.layoutWidth
       height: root.dockHeight
       radius: 22
       color: Util.alpha(Color.background, 0.88)
@@ -521,23 +676,57 @@ Item {
       border.width: 1
       opacity: root.autoHide && !root.enabled ? 0.55 : (root.menuOpen || root.dockHovered ? 1 : 0.96)
 
+      Behavior on width {
+        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+      }
       Behavior on anchors.bottomMargin {
         NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
       }
       Behavior on opacity { NumberAnimation { duration: 180 } }
 
-      Row {
+      Item {
         id: dockRow
         anchors.centerIn: parent
         anchors.verticalCenterOffset: 6
-        spacing: 8
+        width: root.layoutWidth - 2 * root.sidePadding
+        height: 70
+
+        Behavior on width {
+          NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+        }
 
         Repeater {
           model: root.dockItems
           delegate: Item {
+            id: wrapper
             required property var modelData
-            width: modelData.separator ? 14 : 58
+            width: modelData.separator ? root.separatorWidth : root.slotWidth
             height: 70
+            x: 0
+            property bool animating: false
+
+            property alias targetScale: dockItem.targetScale
+            property alias targetLift: dockItem.targetLift
+            property alias targetOpacity: dockItem.targetOpacity
+
+            Behavior on x {
+              enabled: wrapper.animating
+              SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 }
+            }
+
+            Component.onCompleted: {
+              root.registerItem(modelData.id, wrapper)
+              var seed = root.seedFor(modelData.id)
+              x = seed.x
+              targetScale = seed.scale
+              targetLift = seed.lift
+              targetOpacity = (modelData.id === root.floatingId) ? 0 : 1
+              animating = true
+            }
+            Component.onDestruction: {
+              root.visualCache[modelData.id] = { x: x, scale: targetScale, lift: targetLift }
+              root.unregisterItem(modelData.id)
+            }
 
             Rectangle {
               visible: !!modelData.separator
@@ -548,16 +737,16 @@ Item {
             }
 
             DockItem {
+              id: dockItem
               visible: !modelData.separator
               anchors.centerIn: parent
               itemData: modelData
               iconSize: root.iconSize
-              mouseDistance: root.hoveredMouseX < 0 ? 9999 : root.hoveredMouseX - mapToItem(null, width / 2, 0).x
+              animationEnabled: wrapper.animating
               iconSourceOverride: root.iconSourceFor(modelData)
-              layoutShift: root.layoutShiftFor(modelData.id)
               onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
               onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
-              onDragMoved: function(draggedItem, position) { root.updateDrag(draggedItem, position) }
+              onDragMoved: function(draggedItem, position) { root.onDragMoved(draggedItem, position) }
               onDragFinished: function(draggedItem, position) { root.finishDrag(draggedItem, position) }
               onTooltipRequested: function(hoveredItem, isVisible, centerX) {
                 root.tooltipCenterX = centerX
@@ -568,15 +757,16 @@ Item {
                   root.hoveredItemId = hoveredItem.id
                   root.hoveredMouseX = pointerX
                   root.tooltipCenterX = pointerX
-                } else if (root.hoveredItemId === hoveredItem.id) {
+                } else if (!root.floatingId && root.hoveredItemId === hoveredItem.id) {
+                  // During a drag the drag controller owns hoveredMouseX.
                   root.hoveredItemId = ""
                   root.hoveredMouseX = -1
                 }
+                root.applyLayout()
               }
             }
           }
         }
-
       }
 
       MouseArea {
@@ -588,6 +778,10 @@ Item {
         onExited: {
           root.dockHovered = false
           if (root.autoHide && root.dockReady) hideTimer.restart()
+        }
+        onPositionChanged: {
+          root.hoveredMouseX = mouseArea.mapToItem(null, mouseX, mouseY).x
+          root.applyLayout()
         }
       }
     }
@@ -631,5 +825,71 @@ Item {
     id: dockMenu
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false
+  }
+
+  // Persistence is written only after the settle animation finishes, matching
+  // the "visual state -> animation completes -> persist pin" ordering.
+  Timer {
+    id: persistTimer
+    interval: 300
+    onTriggered: root.savePinned()
+  }
+
+  Timer {
+    id: ghostHideTimer
+    interval: 260
+    onTriggered: {
+      root.ghostSource = ""
+      root.ghostSettling = false
+      root.ghostOpacity = 1
+      root.ghostScale = 1.18
+    }
+  }
+
+  // The dragged icon lives in its own overlay window so it can follow the
+  // cursor anywhere on screen without clipping against the dock's mask. Its
+  // input region is only the anchor, so it never blocks clicks. Position is
+  // driven externally by the drag controller from the phantom's mouse events.
+  PanelWindow {
+    id: dragGhostWindow
+    visible: root.ghostSource !== ""
+    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.namespace: "macos-dock-drag"
+    anchors { top: true; bottom: true; left: true; right: true }
+    mask: Region { item: ghostAnchor }
+
+    Item {
+      id: ghostAnchor
+      x: root.ghostX
+      y: root.ghostY
+      width: root.iconSize * root.ghostScale + 16
+      height: root.iconSize * root.ghostScale + 16
+      opacity: root.ghostOpacity
+      Behavior on x { SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 } }
+      Behavior on y { SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 } }
+      Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+
+      Rectangle {
+        anchors.centerIn: parent
+        width: parent.width - 4
+        height: parent.height - 4
+        radius: root.iconSize * 0.26
+        color: Util.alpha(Color.background, 0.55)
+        border.color: Util.alpha(Color.foreground, 0.18)
+        border.width: 1
+      }
+
+      Image {
+        anchors.centerIn: parent
+        width: root.iconSize * root.ghostScale
+        height: root.iconSize * root.ghostScale
+        source: root.ghostSource
+        sourceSize: Qt.size(root.iconSize * 2, root.iconSize * 2)
+        asynchronous: true
+      }
+    }
   }
 }

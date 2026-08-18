@@ -8,16 +8,18 @@ Item {
 
   required property var itemData
   property int iconSize: 52
-  property real hoverScale: 1.46
-  property real magnificationRadius: 104
-  property real mouseDistance: 9999
+  // Targets driven by the panel's layout engine. Every change is animated so
+  // nothing ever teleports.
+  property real targetScale: 1
+  property real targetLift: 0
+  property real targetOpacity: 1
+  property bool animationEnabled: true
   property bool isDragging: false
+  property bool leftPressed: false
   property bool tooltipVisible: false
   property string iconSourceOverride: ""
-  property real layoutShift: 0
   property point pressPosition: Qt.point(0, 0)
 
-  signal moveRequested(int fromIndex, int toIndex)
   signal dragMoved(var itemData, point position)
   signal dragFinished(var itemData, point position)
   signal itemLeftClicked(var itemData)
@@ -28,12 +30,6 @@ Item {
   width: iconSize + 8
   height: iconSize + 18
 
-  readonly property real proximityScale: {
-    var distance = Math.abs(mouseDistance)
-    var influence = Math.max(0, 1 - distance / magnificationRadius)
-    return 1 + (hoverScale - 1) * influence * influence
-  }
-
   function iconSource() {
     if (root.iconSourceOverride) return root.iconSourceOverride
     var name = IconResolver.resolveIcon(itemData)
@@ -42,17 +38,23 @@ Item {
     return Quickshell.iconPath(name, true)
   }
 
-  Behavior on scale { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-  scale: root.isDragging ? 1.16 : proximityScale
-
-  Translate {
-    id: dragTranslation
-    x: (root.isDragging ? root.dragOffsetX : 0) + root.layoutShift
-    y: root.isDragging ? -10 : 0
+  Behavior on scale {
+    enabled: root.animationEnabled
+    SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 }
   }
-  property real dragOffsetX: 0
-  Behavior on layoutShift { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
-  Behavior on dragOffsetX { NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
+  scale: root.targetScale
+
+  Behavior on y {
+    enabled: root.animationEnabled
+    SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 }
+  }
+  y: -root.targetLift
+
+  Behavior on opacity {
+    enabled: root.animationEnabled
+    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+  }
+  opacity: root.targetOpacity
 
   Image {
     id: icon
@@ -96,34 +98,37 @@ Item {
     onEntered: {
       root.tooltipVisible = true
       root.tooltipRequested(root.itemData, true, root.mapToItem(null, root.width / 2, 0).x)
-      root.hoverPointerChanged(root.itemData, true, root.mapToItem(null, mouse.x, mouse.y).x)
+      root.hoverPointerChanged(root.itemData, true, root.mapToItem(null, mouseX, mouseY).x)
     }
     onExited: {
       root.tooltipVisible = false
       root.tooltipRequested(root.itemData, false, root.mapToItem(null, root.width / 2, 0).x)
-      root.hoverPointerChanged(root.itemData, false, root.mapToItem(null, mouse.x, mouse.y).x)
+      root.hoverPointerChanged(root.itemData, false, root.mapToItem(null, mouseX, mouseY).x)
     }
-    onPressed: root.pressPosition = Qt.point(mouseX, mouseY)
+    onPressed: function(mouse) {
+      root.leftPressed = mouse.button === Qt.LeftButton
+      root.pressPosition = Qt.point(mouseX, mouseY)
+    }
     onPositionChanged: {
-      if (!pressed) root.hoverPointerChanged(root.itemData, true, root.mapToItem(null, mouse.x, mouse.y).x)
-      if (pressed && !root.isDragging && Math.hypot(mouseX - root.pressPosition.x, mouseY - root.pressPosition.y) >= 6)
-        root.isDragging = true
-      if (pressed && root.isDragging) {
-        root.dragOffsetX = mouseX - root.pressPosition.x
-        root.dragMoved(root.itemData, root.mapToItem(null, mouse.x, mouse.y))
+      if (!pressed) {
+        root.hoverPointerChanged(root.itemData, true, root.mapToItem(null, mouseX, mouseY).x)
+        return
       }
+      if (root.leftPressed && !root.isDragging && Math.hypot(mouseX - root.pressPosition.x, mouseY - root.pressPosition.y) >= 6)
+        root.isDragging = true
+      if (root.leftPressed && root.isDragging)
+        root.dragMoved(root.itemData, root.mapToItem(null, mouseX, mouseY))
     }
     onReleased: function(mouse) {
-      var right = mouse.button === Qt.RightButton
-      if (right) {
-      root.itemRightClicked(root.itemData, root.mapToItem(null, mouse.x, mouse.y))
+      if (mouse.button === Qt.RightButton) {
+        root.itemRightClicked(root.itemData, root.mapToItem(null, mouseX, mouseY))
       } else if (!root.isDragging) {
         root.itemLeftClicked(root.itemData)
       } else {
-        root.dragFinished(root.itemData, root.mapToItem(null, mouse.x, mouse.y))
+        root.dragFinished(root.itemData, root.mapToItem(null, mouseX, mouseY))
       }
       root.isDragging = false
-      root.dragOffsetX = 0
+      root.leftPressed = false
     }
   }
 }
