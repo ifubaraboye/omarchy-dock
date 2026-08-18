@@ -3,8 +3,6 @@
 var FALLBACK_MAP = {
     "org.kde.dolphin": "system-file-manager",
     "dolphin": "system-file-manager",
-    "com.mitchellh.ghostty": "utilities-terminal",
-    "ghostty": "utilities-terminal",
     "code": "vscode",
     "com.visualstudio.code": "vscode",
     "google-chrome": "google-chrome",

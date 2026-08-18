@@ -1,11 +1,6 @@
 .pragma library
 
-var DEFAULT_PINNED = [
-    "org.kde.dolphin",
-    "com.mitchellh.ghostty",
-    "code",
-    "google-chrome"
-]
+var DEFAULT_PINNED = []
 
 var lastWrittenHash = null
 
