@@ -88,21 +88,17 @@ omarchy-shell macos.dock toggle
 ## Alt+Tab application switcher
 
 The plugin ships a macOS-style app switcher (a glass pill with the running
-applications in most-recently-used order). The plugin does not modify your
-Hyprland configuration; add these bindings to
-`~/.config/hypr/bindings.conf` to trigger it:
+applications in most-recently-used order). No setup is needed: when the shell
+starts, the plugin registers the bindings automatically:
 
-```ini
-bind = ALT, TAB, exec, omarchy-shell -q macos.dock altTabNext
-bind = ALT SHIFT, TAB, exec, omarchy-shell -q macos.dock altTabPrev
-```
+- `ALT + GRAVE` (Alt + `` ` ``) — next application
+- `ALT + SHIFT + GRAVE` (Alt + Shift + `` ` ``) — previous application
 
 Behavior:
 
-- Hold `Alt`, press `Tab` to cycle forward, `Shift + Tab` to cycle backward.
-  The first `Tab` selects the application after the currently focused one,
-  like macOS. Holding `Tab` repeats only if you add the `e` flag to the bind
-  (`bind = ALT, TAB, e, exec, ...`).
+- Hold `Alt`, press `` ` `` to cycle forward, `Shift + `` ` `` to cycle
+  backward. The first press selects the application after the currently
+  focused one, like macOS.
 - Release `Alt` to activate the selected application (its most recently
   focused window, or launch it if none is open).
 - `Enter` activates the selection, `Escape` cancels without changing focus,
@@ -110,6 +106,23 @@ Behavior:
   to activate.
 - The switcher opens on the dock's primary screen and cycles applications
   only — pinned-but-closed applications are never included.
+
+### Changing the keybind
+
+The registered binds live only for the current session (they are re-added at
+each shell start and never written to any config file). To use a different
+combination, add your own bind to `~/.config/hypr/bindings.lua` — your
+config-file bind takes precedence over the plugin's default:
+
+```lua
+o.bind("ALT + TAB", "App switcher next", "omarchy-shell -q macos.dock altTabNext")
+o.bind("ALT + SHIFT + TAB", "App switcher prev", "omarchy-shell -q macos.dock altTabPrev")
+```
+
+Note: Omarchy's default config already binds `ALT + TAB` to window cycling, so
+if you rebind to `ALT + TAB` you must first free it with `hl.unbind("ALT + TAB")`
+in your `bindings.lua` (and `hl.unbind("ALT + SHIFT + TAB")` for the previous
+direction).
 
 For testing without bindings:
 

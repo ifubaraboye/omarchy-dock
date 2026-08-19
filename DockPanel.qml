@@ -1103,12 +1103,21 @@ Item {
     // fade would add a visible fade-in. Disable compositor animation for
     // both layer namespaces so the HUD pops in instantly.
     if (!root.layerRuleProcess.running) root.layerRuleProcess.running = true
+    // Register the app-switcher keybinds so the HUD works out of the box.
+    // Config-file binds load before this runtime eval, so a user's own bind
+    // for the same combo takes precedence.
+    if (!root.altTabBindProcess.running) root.altTabBindProcess.running = true
     Qt.callLater(function() { root.dockReady = true })
   }
 
   Process {
     id: layerRuleProcess
     command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"]
+  }
+
+  Process {
+    id: altTabBindProcess
+    command: ["hyprctl", "eval", "o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"]
   }
 
   PanelWindow {
