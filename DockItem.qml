@@ -65,8 +65,7 @@ Item {
     source: root.iconSource()
     sourceSize: Qt.size(root.iconSize * 2, root.iconSize * 2)
     fillMode: Image.PreserveAspectFit
-    asynchronous: true
-    cache: false
+    cache: true
 
     Text {
       anchors.centerIn: parent
