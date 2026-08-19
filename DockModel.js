@@ -209,21 +209,6 @@ function orderPinned(order, pinnedIds) {
     return result
 }
 
-// Builds dock items in the session order with pinned/running flags.
-function buildOrderedItems(order, pinnedIds, entries, runningIds) {
-    var pinned = (pinnedIds || []).map(normalizeId)
-    var running = (runningIds || []).map(normalizeId)
-    var result = []
-    ;(order || []).forEach(function(id) {
-        var value = normalizeId(id)
-        var entry = entryFor(value, entries)
-        result.push({ id: value, name: entry.name || entry.displayName || value,
-            icon: entry.icon || entry.iconName || "", pinned: pinned.indexOf(value) !== -1,
-            running: running.indexOf(value) !== -1 })
-    })
-    return result
-}
-
 // Continuous layout driven by the cursor. Each item's slot widens with its
 // magnification so icons never overlap and the total width grows as the cursor
 // approaches. Positions are based on the unscaled center estimate for stability.
@@ -336,7 +321,6 @@ if (typeof module !== "undefined" && module.exports) {
         reconcileDockOrder: reconcileDockOrder,
         moveInOrder: moveInOrder,
         orderPinned: orderPinned,
-        buildOrderedItems: buildOrderedItems,
         computeLayout: computeLayout,
         insertionIndexFor: insertionIndexFor,
         entryFor: entryFor,

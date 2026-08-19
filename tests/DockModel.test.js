@@ -147,15 +147,6 @@ test("orderPinned keeps only pinned members in order", () => {
   assert.deepEqual(Array.from(model.orderPinned(["x", "a", "y"], ["a"])), ["a"])
 })
 
-test("buildOrderedItems marks pinned and running flags in session order", () => {
-  const items = model.buildOrderedItems(["a", "x", "b"], ["a", "b"], [{ id: "a" }, { id: "b" }, { id: "x" }], ["a", "x"])
-  assert.deepEqual(Array.from(items.map(i => i.id)), ["a", "x", "b"])
-  assert.equal(items[0].pinned, true)
-  assert.equal(items[1].pinned, false)
-  assert.equal(items[2].pinned, true)
-  assert.equal(items[1].running, true)
-})
-
 test("computeLayout rests evenly with no cursor and grows with magnification", () => {
   const opts = model.LAYOUT_OPTS
   const rest = model.computeLayout([{ id: "a" }, { id: "b" }, { id: "c" }], -1, opts)
