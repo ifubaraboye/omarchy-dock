@@ -84,7 +84,7 @@ Item {
     width: 5
     height: 5
     radius: 3
-    color: Color.accent
+    color: Qt.darker(Color.accent, 1.25)
     visible: !!root.itemData.running
   }
 
