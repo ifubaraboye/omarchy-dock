@@ -11,6 +11,7 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Pinned application persistence
 - Running-application indicators
 - Pin, unpin, new-window, and close actions
+- Live window previews on hover, with cached thumbnail fallbacks
 - Conflict detection for `rosakodu.dock`
 - Custom macOSicons, local PNG, and WebP icon overrides
 
