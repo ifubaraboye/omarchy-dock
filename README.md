@@ -14,6 +14,8 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Live window previews on hover, with cached thumbnail fallbacks
 - Custom macOSicons, local PNG, and WebP icon overrides
 - macOS-style Alt+Tab application switcher (most-recently-used order)
+- Tiling window adaptation: while the dock is shown, it reserves its footprint
+  as a Wayland exclusive zone, so tiled windows never overlap it
 
 ## Install
 
@@ -40,6 +42,13 @@ For the best experience, use **floating windows** (not tiling): the dock is
 designed to work with a floating layout where windows overlap its surface, and
 it behaves best when windows are allowed to float over it rather than being
 tiled up to its edges.
+
+Tiled layouts are supported too: while the dock is visible ("Always Show"
+mode), it claims its footprint (dock surface plus bottom margin) as a Wayland
+exclusive zone, so tiled Hyprland windows reserve that space and never overlap
+the dock. Hiding the dock releases the zone and tiled windows reclaim the
+space. Floating windows are unaffected and may still overlap the dock by
+design.
 
 To remove the plugin, disable it and delete its installed directory:
 

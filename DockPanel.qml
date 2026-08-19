@@ -1352,6 +1352,26 @@ Item {
     onActivated: function(appId, appName) { root.activateApp(appId, appName) }
   }
 
+  // Tiling window adaptation: a transparent, input-less layer that reserves
+  // the dock's footprint as a Wayland exclusive zone, so tiled windows never
+  // overlap the dock. A separate surface keeps the full-screen dockWindow
+  // (whose coordinate space drag ghosts and tooltips rely on) untouched; the
+  // zone is simply ignored on surfaces anchored to all four edges. When the
+  // dock is hidden the spacer unmaps and tiled windows reclaim the space.
+  PanelWindow {
+    id: dockSpacerWindow
+    visible: !root.conflictDetected && root.enabled
+    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.layer: WlrLayer.Background
+    WlrLayershell.namespace: "macos-dock-spacer"
+    WlrLayershell.exclusiveZone: root.enabled ? root.dockHeight + root.bottomMargin : 0
+    anchors { bottom: true; left: true; right: true }
+    height: root.dockHeight + root.bottomMargin
+    mask: Region {}
+  }
+
   // The dragged icon lives in its own overlay window so it can follow the
   // cursor anywhere on screen without clipping against the dock's mask. Its
   // input region is only the anchor, so it never blocks clicks. Position is
