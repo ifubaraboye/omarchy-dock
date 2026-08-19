@@ -117,7 +117,7 @@ Item {
       if (root.leftPressed && !root.isDragging && Math.hypot(mouseX - root.pressPosition.x, mouseY - root.pressPosition.y) >= 6)
         root.isDragging = true
       if (root.leftPressed && root.isDragging)
-        root.dragMoved(root.itemData, root.mapToItem(null, mouseX, mouseY))
+        root.dragMoved(root.itemData, Qt.point(mouseX, mouseY))
     }
     onReleased: function(mouse) {
       if (mouse.button === Qt.RightButton) {
@@ -125,7 +125,7 @@ Item {
       } else if (!root.isDragging) {
         root.itemLeftClicked(root.itemData)
       } else {
-        root.dragFinished(root.itemData, root.mapToItem(null, mouseX, mouseY))
+        root.dragFinished(root.itemData, Qt.point(mouseX, mouseY))
       }
       root.isDragging = false
       root.leftPressed = false

@@ -21,6 +21,11 @@ Item {
   property var pinnedIds: []
   property var dockOrder: []
   property bool pinFileLoaded: false
+  // Our temp+rename writes make the pin-file watcher fire before FileView's
+  // async re-read finishes, so onFileChanged can observe stale text(). The
+  // reload() path re-reads fresh, and this window skips watcher events that
+  // belong to our own save cycles entirely.
+  property double ownWriteUntil: 0
   property var appEntries: []
   property var runningIds: []
   property var dockItems: []
@@ -69,6 +74,11 @@ Item {
   property real ghostScale: 1.18
   property real ghostOpacity: 1
   property bool ghostSettling: false
+  // Drop-inside state, tracked per-frame in onDragMoved from the cursor's
+  // dockSurface-local position. Mapping item-to-item inside the same window
+  // avoids the PanelWindow's output-anchored scene space entirely, so the
+  // check is a plain AABB against the surface the input mask hit-tests.
+  property bool dragInsideDock: true
 
   IpcHandler {
     target: "macos.dock"
@@ -212,7 +222,7 @@ Item {
     for (var i = 0; i < a.length; i++) {
       var found = false
       for (var j = 0; j < b.length; j++) {
-        if (a[i].id === b[j].id && a[i].pinned === b[j].pinned) { found = true; break }
+        if (a[i].id === b[j].id && a[i].pinned === b[j].pinned && a[i].running === b[j].running) { found = true; break }
       }
       if (!found) return false
     }
@@ -238,7 +248,7 @@ Item {
 
   function applyLayout() {
     var cursorX = root.cursorXInRow()
-    var baseFlow = DockModel.buildFlow(root.dockOrder, [], "", -1)
+    var baseFlow = DockModel.buildFlow(root.dockOrder, [], root.floatingId, -1)
     if (root.floatingId && cursorX >= 0)
       root.tempDrag.index = DockModel.insertionIndexFor(cursorX, baseFlow, DockModel.LAYOUT_OPTS)
     var flow = DockModel.buildFlow(
@@ -337,6 +347,7 @@ Item {
 
   function savePinned() {
     var content = DockModel.serializePinned(root.pinnedIds, root.dockOrder)
+    root.ownWriteUntil = Date.now() + 2000
     DockModel.markWritten(content)
     tempWriter.path = root.tempPinPath
     tempWriter.setText(content)
@@ -371,7 +382,7 @@ Item {
   }
 
   // Drag controller ---------------------------------------------------------
-  function onDragMoved(item, position) {
+  function onDragMoved(item, position, surfacePosition) {
     if (!root.floatingId) {
       root.floatingId = item.id
       root.tempDrag = { id: item.id, index: -1 }
@@ -382,9 +393,9 @@ Item {
       root.tooltipItem = null
     }
     root.hoveredMouseX = position.x
-    var cursor = dockRow.mapFromItem(null, position.x, position.y)
-    var baseFlow = DockModel.buildFlow(root.dockOrder, [], "", -1)
-    root.tempDrag.index = DockModel.insertionIndexFor(cursor.x, baseFlow, DockModel.LAYOUT_OPTS)
+    root.dragInsideDock =
+      surfacePosition.x >= 0 && surfacePosition.x <= dockSurface.width &&
+      surfacePosition.y >= 0 && surfacePosition.y <= dockSurface.height
     root.ghostX = position.x - root.iconSize * root.ghostScale / 2
     root.ghostY = position.y - root.iconSize * root.ghostScale / 2 - 30
     root.applyLayout()
@@ -397,18 +408,16 @@ Item {
     ghostHideTimer.restart()
   }
 
-  function finishDrag(item, position) {
+  function finishDrag(item, surfacePosition) {
     var id = item.id
     if (!root.floatingId) return
-    // `cursor` is already in dockRow's local space (origin at the row's top
-    // left), so the row band is just [0, dockRow.height] with a vertical
-    // margin. Anchoring against `rowTop` here was comparing two points in the
-    // same space and collapsed to an absolute screen-Y check, which made any
-    // drop on a bottom-anchored dock count as "outside" (and unpin the item).
-    var cursor = dockRow.mapFromItem(null, position.x, position.y)
-    var flowWidth = root.layoutWidth - 2 * root.sidePadding
-    var inside = cursor.x >= -root.sidePadding && cursor.x <= flowWidth + root.sidePadding &&
-                 cursor.y >= -40 && cursor.y <= dockRow.height + 40
+    // `dragInsideDock` is tracked per-frame in onDragMoved from the cursor's
+    // dockSurface-local position — the same surface the input mask
+    // (Region { item: dockSurface }) hit-tests — so a drop is judged against
+    // exactly what received the drag instead of a coordinate mapping
+    // re-derived at release time.
+    var inside = root.dragInsideDock
+    console.log("macos.dock finishDrag", JSON.stringify({ id: id, inside: inside, localX: surfacePosition.x, localY: surfacePosition.y, surfaceW: dockSurface.width, surfaceH: dockSurface.height, cursorX: root.cursorXInRow() }))
     var wasPinned = root.pinnedIds.indexOf(id) !== -1
     var persist = false
 
@@ -420,6 +429,8 @@ Item {
       // Reorder the session dock — never the pinned list. Dragging never
       // promotes a running app into a persistent pin.
       var newOrder = DockModel.moveInOrder(root.dockOrder, id, idx)
+      var newPinned = wasPinned ? DockModel.orderPinned(newOrder, root.pinnedIds) : null
+      console.log("macos.dock reorder", JSON.stringify({ id: id, idx: idx, wasPinned: wasPinned, dockOrderBefore: root.dockOrder, newOrder: newOrder, pinnedBefore: root.pinnedIds, newPinned: newPinned, runningIds: root.runningIds }))
       if (newOrder.join("|") !== root.dockOrder.join("|")) {
         root.dockOrder = newOrder
         // Snap the dropped delegate straight to its new slot. Without this the
@@ -585,16 +596,23 @@ Item {
     watchChanges: true
     printErrors: false
     onLoaded: {
-      root.pinFileLoaded = true
-      root.pinnedIds = DockModel.parsePinned(text(), DockModel.DEFAULT_PINNED)
+      if (!root.pinFileLoaded) {
+        root.pinFileLoaded = true
+        root.pinnedIds = DockModel.parsePinned(text(), DockModel.DEFAULT_PINNED)
+      } else {
+        // Reloaded after a change: apply only content we did not write.
+        if (!DockModel.shouldReprocess(text())) return
+        console.log("macos.dock pinFileApplied", JSON.stringify({ pinned: root.pinnedIds }))
+        root.pinnedIds = DockModel.parsePinned(text(), root.pinnedIds)
+      }
       root.dockOrder = DockModel.parseOrder(text(), root.dockOrder)
       root.refreshItems()
     }
     onFileChanged: {
-      if (!DockModel.shouldReprocess(text())) return
-      root.pinnedIds = DockModel.parsePinned(text(), root.pinnedIds)
-      root.dockOrder = DockModel.parseOrder(text(), root.dockOrder)
-      root.refreshItems()
+      // Watcher events for our own save cycles are stale-text races; skip
+      // them and let the reload()/onLoaded path handle real external edits.
+      if (Date.now() < root.ownWriteUntil) return
+      pinFile.reload()
     }
     onLoadFailed: {
       root.pinFileLoaded = true
@@ -746,8 +764,14 @@ Item {
               iconSourceOverride: root.iconSourceFor(modelData)
               onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
               onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
-              onDragMoved: function(draggedItem, position) { root.onDragMoved(draggedItem, position) }
-              onDragFinished: function(draggedItem, position) { root.finishDrag(draggedItem, position) }
+              onDragMoved: function(draggedItem, position) {
+                root.onDragMoved(draggedItem,
+                  dockItem.mapToItem(null, position.x, position.y),
+                  dockItem.mapToItem(dockSurface, position.x, position.y))
+              }
+              onDragFinished: function(draggedItem, position) {
+                root.finishDrag(draggedItem, dockItem.mapToItem(dockSurface, position.x, position.y))
+              }
               onTooltipRequested: function(hoveredItem, isVisible, centerX) {
                 root.tooltipCenterX = centerX
                 root.showTooltip(hoveredItem, isVisible)
