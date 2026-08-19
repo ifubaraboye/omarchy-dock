@@ -28,6 +28,10 @@ Item {
   property double ownWriteUntil: 0
   property var appEntries: []
   property var runningIds: []
+  // Most-recently-used app ids, front = most recent. Maintained from focus
+  // changes; powers the Alt+Tab switcher ordering (an app switcher cycles by
+  // recency, not by the dock's pinned-first visual order).
+  property var mruIds: []
   // Repeater model: stable id strings. Replaced only when the id set changes
   // (apps opened/closed); reorders and pin/running toggles never touch it, so
   // no delegate is torn down by dragging or state changes.
@@ -91,6 +95,9 @@ Item {
     function toggle() { root.enabled = !root.enabled }
     function show() { root.enabled = true }
     function hide() { root.enabled = false }
+    function altTabNext() { root.altTabNext() }
+    function altTabPrev() { root.altTabPrev() }
+    function altTabCancel() { root.altTabCancel() }
   }
 
   function normalizeRunning() {
@@ -333,6 +340,114 @@ Item {
     var entry = DockModel.entryFor(item.id, root.appEntries)
     if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
       root.shell.appLibrary.launch(item.id, entry.name || item.name)
+  }
+
+  // ---- Alt+Tab app switcher -------------------------------------------------
+  // The switcher is an app switcher, so recency is tracked per application
+  // (not per window). The dock's visual order (pinned first) is irrelevant
+  // here: focus history drives the cycle order.
+
+  function dockIdForHyprlandWindow(window) {
+    try {
+      var ids = []
+      if (window.wayland && window.wayland.appId) ids.push(String(window.wayland.appId).toLowerCase())
+      var ipc = window.lastIpcObject || {}
+      if (ipc.appId) ids.push(String(ipc.appId).toLowerCase())
+      if (ipc["class"]) ids.push(String(ipc["class"]).toLowerCase())
+      if (ipc.initialClass) ids.push(String(ipc.initialClass).toLowerCase())
+      for (var i = 0; i < ids.length; i++) {
+        var resolved = root.desktopIdForWindow({ appId: ids[i] })
+        if (resolved) return resolved
+      }
+    } catch (error) {}
+    return ""
+  }
+
+  function touchMru(id) {
+    if (!id) return
+    var list = root.mruIds.slice(0)
+    var i = list.indexOf(id)
+    if (i >= 0) list.splice(i, 1)
+    list.unshift(id)
+    root.mruIds = list
+  }
+
+  function altTabAppData(id) {
+    var entry = DockModel.entryFor(id, root.appEntries)
+    var name = entry && entry.name ? entry.name : IconResolver.sanitizeName(id)
+    return { id: id, name: name }
+  }
+
+  // MRU order first, then any running app never focused since shell start.
+  function buildAltTabApps() {
+    var apps = []
+    var seen = {}
+    for (var i = 0; i < root.mruIds.length; i++) {
+      var id = root.mruIds[i]
+      if (root.runningIds.indexOf(id) === -1 || seen[id]) continue
+      seen[id] = true
+      apps.push(root.altTabAppData(id))
+    }
+    for (var j = 0; j < root.runningIds.length; j++) {
+      var rid = root.runningIds[j]
+      if (seen[rid]) continue
+      seen[rid] = true
+      apps.push(root.altTabAppData(rid))
+    }
+    return apps
+  }
+
+  function altTabFocusedIndex(apps) {
+    try {
+      var win = Hyprland.activeToplevel
+      if (!win) return -1
+      var id = root.dockIdForHyprlandWindow(win)
+      if (!id) return -1
+      for (var i = 0; i < apps.length; i++)
+        if (apps[i].id === id) return i
+    } catch (error) {}
+    return -1
+  }
+
+  function altTabNext() {
+    if (altTab.active) {
+      altTab.next()
+      return
+    }
+    var apps = root.buildAltTabApps()
+    if (apps.length === 0) return
+    var index = root.altTabFocusedIndex(apps)
+    // First Tab after opening: land on the app AFTER the focused one, like
+    // macOS. With nothing focused, start at the front.
+    altTab.open(apps, index < 0 ? 0 : (index + 1) % apps.length)
+  }
+
+  function altTabPrev() {
+    if (altTab.active) {
+      altTab.prev()
+      return
+    }
+    var apps = root.buildAltTabApps()
+    if (apps.length === 0) return
+    var index = root.altTabFocusedIndex(apps)
+    altTab.open(apps, index < 0 ? apps.length - 1 : (index - 1 + apps.length) % apps.length)
+  }
+
+  function altTabCancel() {
+    altTab.cancel()
+  }
+
+  function activateApp(id, name) {
+    try {
+      // Same no-warp focus path as clicking the dock: never Toplevel.activate().
+      var hyprWindow = root.hyprlandWindowForItem({ id: id })
+      if (hyprWindow && root.focusExistingWindow(hyprWindow)) return
+    } catch (error) {
+    }
+    var entry = DockModel.entryFor(id, root.appEntries)
+    var label = name || (entry && entry.name) || id
+    if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
+      root.shell.appLibrary.launch(id, label)
   }
 
   Timer {
@@ -939,6 +1054,10 @@ Item {
   Connections {
     target: Hyprland
     function onActiveToplevelChanged() {
+      // Keep the Alt+Tab MRU list in sync with focus changes. The switcher
+      // only tracks apps the dock knows about.
+      var mruId = root.dockIdForHyprlandWindow(Hyprland.activeToplevel)
+      if (mruId && root.runningIds.indexOf(mruId) !== -1) root.touchMru(mruId)
       // Capture a thumbnail whenever the active window changes: it is on top
       // at that moment, so the grim capture is not occluded by other windows.
       var info = root.activeToplevelInfo()
@@ -980,7 +1099,25 @@ Item {
     root.checkDockConflict()
     root.refreshApps()
     root.refreshItems()
+    // The alt-tab HUD opens/closes on keypresses; Hyprland's default layer
+    // fade would add a visible fade-in. Disable compositor animation for
+    // both layer namespaces so the HUD pops in instantly.
+    if (!root.layerRuleProcess.running) root.layerRuleProcess.running = true
+    // Register the app-switcher keybinds so the HUD works out of the box.
+    // Config-file binds load before this runtime eval, so a user's own bind
+    // for the same combo takes precedence.
+    if (!root.altTabBindProcess.running) root.altTabBindProcess.running = true
     Qt.callLater(function() { root.dockReady = true })
+  }
+
+  Process {
+    id: layerRuleProcess
+    command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"]
+  }
+
+  Process {
+    id: altTabBindProcess
+    command: ["hyprctl", "eval", "o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"]
   }
 
   PanelWindow {
@@ -1207,6 +1344,32 @@ Item {
     onActivated: function(data) { root.activatePreviewWindow(data) }
     onPreviewHoverEntered: previewGrace.stop()
     onPreviewHoverExited: previewGrace.restart()
+  }
+
+  AltTabPanel {
+    id: altTab
+    iconSourceFor: function(app) { return root.iconSourceFor(app.id) }
+    onActivated: function(appId, appName) { root.activateApp(appId, appName) }
+  }
+
+  // Tiling window adaptation: a transparent, input-less layer that reserves
+  // the dock's footprint as a Wayland exclusive zone, so tiled windows never
+  // overlap the dock. A separate surface keeps the full-screen dockWindow
+  // (whose coordinate space drag ghosts and tooltips rely on) untouched; the
+  // zone is simply ignored on surfaces anchored to all four edges. When the
+  // dock is hidden the spacer unmaps and tiled windows reclaim the space.
+  PanelWindow {
+    id: dockSpacerWindow
+    visible: !root.conflictDetected && root.enabled
+    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.layer: WlrLayer.Background
+    WlrLayershell.namespace: "macos-dock-spacer"
+    WlrLayershell.exclusiveZone: root.enabled ? root.dockHeight + root.bottomMargin : 0
+    anchors { bottom: true; left: true; right: true }
+    height: root.dockHeight + root.bottomMargin
+    mask: Region {}
   }
 
   // The dragged icon lives in its own overlay window so it can follow the
