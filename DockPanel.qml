@@ -240,6 +240,15 @@ Item {
     return dockRow.mapFromItem(null, root.hoveredMouseX, 0).x
   }
 
+  // Leaving the dock over a gap or the surface padding never triggers a
+  // DockItem exit, so reset the hover state here or icons stay magnified.
+  function clearHover() {
+    if (root.floatingId) return // the drag controller owns hoveredMouseX
+    root.hoveredItemId = ""
+    root.hoveredMouseX = -1
+    root.applyLayout()
+  }
+
   function registerItem(id, item) { root.delegateById[id] = item }
   function unregisterItem(id) { delete root.delegateById[id] }
 
@@ -1089,9 +1098,12 @@ Item {
                   root.hoveredMouseX = pointerX
                   root.tooltipCenterX = pointerX
                 } else if (!root.floatingId && root.hoveredItemId === hoveredItem.id) {
-                  // During a drag the drag controller owns hoveredMouseX.
+                  // The cursor left this item's hit area but is still on the
+                  // dock (or already inside a neighbor's). Keep hoveredMouseX
+                  // continuous so magnification glides across gaps instead of
+                  // snap-shrinking between items; clearHover() resets it when
+                  // the cursor actually leaves the dock surface.
                   root.hoveredItemId = ""
-                  root.hoveredMouseX = -1
                 }
                 root.applyLayout()
               }
@@ -1108,6 +1120,7 @@ Item {
         onEntered: { root.dockHovered = true; root.enabled = true; hideTimer.stop() }
         onExited: {
           root.dockHovered = false
+          root.clearHover()
           if (root.autoHide && root.dockReady) hideTimer.restart()
         }
         onPositionChanged: {
@@ -1142,7 +1155,11 @@ Item {
       height: 18
       hoverEnabled: true
       onEntered: { root.dockHovered = true; hideTimer.stop() }
-      onExited: { root.dockHovered = false; hideTimer.restart() }
+      onExited: {
+        root.dockHovered = false
+        root.clearHover()
+        hideTimer.restart()
+      }
     }
   }
 
