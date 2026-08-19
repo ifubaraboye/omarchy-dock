@@ -125,16 +125,11 @@ PanelWindow {
     border.width: 1
     opacity: root.active ? 1 : 0.96
 
-    Behavior on width { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-    Behavior on opacity { NumberAnimation { duration: 180 } }
-
     Item {
       id: dockRow
       anchors.centerIn: parent
       width: root.surfaceWidth - 2 * root.sidePadding
       height: root.iconSize + 26
-
-      Behavior on width { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
 
       Repeater {
         model: root.apps
@@ -169,8 +164,7 @@ PanelWindow {
             source: root.iconSource(modelData)
             sourceSize: Qt.size(root.iconSize * 2, root.iconSize * 2)
             fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            cache: false
+            cache: true
 
             Text {
               anchors.centerIn: parent

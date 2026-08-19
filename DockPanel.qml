@@ -1099,7 +1099,16 @@ Item {
     root.checkDockConflict()
     root.refreshApps()
     root.refreshItems()
+    // The alt-tab HUD opens/closes on keypresses; Hyprland's default layer
+    // fade would add a visible fade-in. Disable compositor animation for
+    // both layer namespaces so the HUD pops in instantly.
+    if (!root.layerRuleProcess.running) root.layerRuleProcess.running = true
     Qt.callLater(function() { root.dockReady = true })
+  }
+
+  Process {
+    id: layerRuleProcess
+    command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"]
   }
 
   PanelWindow {
