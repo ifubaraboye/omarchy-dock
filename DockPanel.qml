@@ -37,6 +37,7 @@ Item {
   property bool dockHovered: false
   property bool menuOpen: false
   property bool enabled: true
+  onEnabledChanged: if (!root.enabled) root.hidePreview()
   property bool dockReady: false
   // Keep the prototype visible while validating layout and interaction. The
   // slide-away behavior remains available for a later settings toggle.
@@ -164,19 +165,23 @@ Item {
     return fallback
   }
 
-  function focusExistingWindow(hyprWindow) {
-    if (!hyprWindow || !hyprWindow.address) return false
-
+  function focusWindowAddress(address) {
+    if (!address) return false
     // This Omarchy build uses Hyprland's Lua dispatcher syntax. The older
     // `workspace ...` / `focuswindow ...` strings are parsed as Lua and fail.
     // Focusing by address also switches to the window's workspace without
     // going through Toplevel.activate(), which can warp the pointer.
-    var address = String(hyprWindow.address)
-    if (address.indexOf("0x") !== 0) address = "0x" + address
-    root.pendingFocusTarget = "address:" + address
+    var normalized = String(address)
+    if (normalized.indexOf("0x") !== 0) normalized = "0x" + normalized
+    root.pendingFocusTarget = "address:" + normalized
     restoreCursorWarps.stop()
     if (!cursorCaptureProcess.running) cursorCaptureProcess.running = true
     return true
+  }
+
+  function focusExistingWindow(hyprWindow) {
+    if (!hyprWindow || !hyprWindow.address) return false
+    return root.focusWindowAddress(hyprWindow.address)
   }
 
   onShellChanged: if (root.shell) root.refreshApps()
@@ -369,6 +374,7 @@ Item {
 
   function openMenu(item, position) {
     root.tooltipItem = null
+    root.hidePreview()
     root.menuOpen = true
     dockMenu.itemData = item
     dockMenu.requestedPosition = Qt.point(position.x, position.y - dockMenu.height - 12)
@@ -406,6 +412,7 @@ Item {
       root.tooltipItem = null
     }
     root.hoveredMouseX = position.x
+    root.hidePreview()
     root.dragInsideDock =
       surfacePosition.x >= 0 && surfacePosition.x <= dockSurface.width &&
       surfacePosition.y >= 0 && surfacePosition.y <= dockSurface.height
@@ -435,8 +442,7 @@ Item {
       // Reorder the session dock — never the pinned list. Dragging never
       // promotes a running app into a persistent pin.
       var newOrder = DockModel.moveInOrder(root.dockOrder, id, idx)
-      var newPinned = wasPinned ? DockModel.orderPinned(newOrder, root.pinnedIds) : null
-      console.log("macos.dock reorder", JSON.stringify({ id: id, idx: idx, wasPinned: wasPinned, dockOrderBefore: root.dockOrder, newOrder: newOrder, pinnedBefore: root.pinnedIds, newPinned: newPinned, runningIds: root.runningIds }))
+      console.log("macos.dock reorder", JSON.stringify({ id: id, idx: idx, wasPinned: wasPinned, dockOrderBefore: root.dockOrder, newOrder: newOrder, pinnedBefore: root.pinnedIds, runningIds: root.runningIds }))
       if (newOrder.join("|") !== root.dockOrder.join("|")) {
         root.dockOrder = newOrder
         // Snap the dropped delegate straight to its new slot. Without this the
@@ -514,6 +520,174 @@ Item {
       tooltipVisible = false
       tooltipItem = null
     }
+  }
+
+  // Preview controller ------------------------------------------------------
+  function onItemHoverChanged(item, isVisible, centerX) {
+    if (!item || item.separator) return
+    if (isVisible) {
+      root.previewCenterX = centerX
+      if (root.floatingId || root.menuOpen || !root.enabled) return
+      if (!item.running) { root.hidePreview(); return }
+      if (root.previewAppId !== item.id) root.hidePreview()
+      root.previewAppId = item.id
+      previewDelay.restart()
+    } else {
+      if (root.previewAppId === item.id) previewGrace.restart()
+    }
+  }
+
+  function hidePreview() {
+    var was = root.previewAppId
+    previewDelay.stop()
+    previewGrace.stop()
+    root.previewAppId = ""
+    root.previewWindows = []
+    root.previewVisible = false
+    root.pendingPreviewShow = false
+    if (root.deferredTooltipItem && root.hoveredItemId === was) {
+      root.tooltipItem = root.deferredTooltipItem
+      root.tooltipVisible = true
+    }
+    root.deferredTooltipItem = null
+  }
+
+  function array2(v) {
+    if (v === null || v === undefined) return [0, 0]
+    try {
+      var a = Number(v[0])
+      var b = Number(v[1])
+      if (!isNaN(a) && !isNaN(b)) return [a, b]
+    } catch (error) {}
+    return [0, 0]
+  }
+
+  function gatherWindowsForApp(id) {
+    var output = []
+    try {
+      var values = Hyprland.toplevels.values
+      for (var i = 0; i < values.length; i++) {
+        var candidate = values[i]
+        var ids = []
+        if (candidate.wayland && candidate.wayland.appId) ids.push(String(candidate.wayland.appId).toLowerCase())
+        var ipc = candidate.lastIpcObject || {}
+        if (ipc.appId) ids.push(String(ipc.appId).toLowerCase())
+        if (ipc["class"]) ids.push(String(ipc["class"]).toLowerCase())
+        if (ipc.initialClass) ids.push(String(ipc.initialClass).toLowerCase())
+        var match = false
+        for (var j = 0; j < ids.length; j++) {
+          if (ids[j] === String(id).toLowerCase()) { match = true; break }
+          if (root.desktopIdForWindow({ appId: ids[j], title: candidate.title }) === id) { match = true; break }
+        }
+        if (!match) continue
+        var pos = root.array2(ipc.at)
+        var size = root.array2(ipc.size)
+        output.push({
+          address: String(candidate.address || ""),
+          title: String(candidate.title || ""),
+          active: !!(ipc.focused || candidate.focused),
+          mapped: !!ipc.mapped,
+          minimized: !!ipc.minimized,
+          workspaceId: ipc.workspace ? ipc.workspace.id : -1,
+          x: pos[0] || 0,
+          y: pos[1] || 0,
+          w: size[0] || 0,
+          h: size[1] || 0
+        })
+      }
+    } catch (error) {}
+    return output
+  }
+
+  // Live window thumbnails --------------------------------------------------
+  // grim captures the composited output, so a window that is buried under
+  // another window cannot be captured correctly (the thumbnail would show
+  // whatever is on top). Instead, a thumbnail is captured when a window
+  // becomes active (it is on top then) and cached by address. Previews reuse
+  // the cache; windows without a cached thumbnail are captured on hover as a
+  // best-effort fallback. Windows on other workspaces or minimized windows
+  // that were never active fall back to the icon card.
+  function snapshotWindows() {
+    root.currentThumbBatch++
+    root.snapshotPending = 0
+    var focused = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1
+    for (var i = 0; i < root.previewWindows.length; i++) {
+      var w = root.previewWindows[i]
+      if (!w.address) continue
+      if (root.thumbCache[w.address] || root.inFlightAddrs[w.address]) continue
+      // Skip only when we positively know the window cannot be captured.
+      if (w.minimized === true) continue
+      if (w.mapped === false) continue
+      if (w.workspaceId !== undefined && w.workspaceId >= 0 && w.workspaceId !== focused) continue
+      if (!w.w || !w.h) continue
+      root.captureForSnapshot({ address: w.address, x: w.x, y: w.y, w: w.w, h: w.h })
+    }
+    if (root.snapshotPending === 0) root.applyThumbnails()
+  }
+
+  function captureForSnapshot(job) {
+    root.snapshotPending++
+    root.inFlightAddrs[job.address] = true
+    var proc = captureProcess.createObject(root, {
+      jobAddress: job.address,
+      jobBatch: root.currentThumbBatch,
+      command: ["bash", "-c", root.thumbnailCommand(job)]
+    })
+    proc.running = true
+  }
+
+  function captureActive(info) {
+    if (!info || !info.address) return
+    if (root.inFlightAddrs[info.address]) return
+    root.inFlightAddrs[info.address] = true
+    var proc = captureProcess.createObject(root, {
+      jobAddress: info.address,
+      jobBatch: "",
+      command: ["bash", "-c", root.thumbnailCommand(info)]
+    })
+    proc.running = true
+  }
+
+  function thumbnailCommand(job) {
+    var dir = Util.shellQuote(root.thumbnailDir)
+    var target = Util.shellQuote(root.thumbnailDir + "/" + job.address + ".png")
+    var tmp = Util.shellQuote(root.thumbnailDir + "/" + job.address + ".png.tmp")
+    var geometry = job.x + "," + job.y + " " + job.w + "x" + job.h
+    return "mkdir -p " + dir
+      + "; grim -g \"" + geometry + "\" - | magick - -resize 304x184^ -gravity center -extent 304x184 png:" + tmp
+      + " && mv " + tmp + " " + target
+  }
+
+  function applyThumbnails() {
+    if (!root.previewAppId) return
+    var next = []
+    for (var i = 0; i < root.previewWindows.length; i++) {
+      var w = root.previewWindows[i]
+      var copy = {}
+      for (var k in w) copy[k] = w[k]
+      if (root.thumbCache[w.address]) copy.thumbPath = root.thumbnailDir + "/" + w.address + ".png"
+      next.push(copy)
+    }
+    root.previewWindows = next
+    if (root.pendingPreviewShow) {
+      root.pendingPreviewShow = false
+      root.previewBottomY = dockSurface.y
+      root.previewVisible = true
+      root.deferredTooltipItem = root.tooltipItem
+      root.tooltipItem = null
+      root.tooltipVisible = false
+    }
+  }
+
+  function thumbnailFor(w) {
+    if (!w || !w.thumbPath) return ""
+    return Util.fileUrl(w.thumbPath)
+  }
+
+  function activatePreviewWindow(data) {
+    if (!data || !data.address) return
+    root.hidePreview()
+    root.focusWindowAddress(data.address)
   }
 
   function loadCustomIcons(content) {
@@ -606,8 +780,47 @@ Item {
   }
 
   Timer { id: conflictNotice; interval: 30000 }
-  Timer { id: tooltipDelay; interval: 400; onTriggered: tooltipVisible = true }
   property bool tooltipVisible: false
+  property var deferredTooltipItem: null
+
+  // Hover-to-preview state. Lives entirely outside the dock model: it never
+  // touches dockItems/dockOrder/pinnedIds, so showing a preview can never
+  // rebuild the Repeater or flash the dock.
+  property string previewAppId: ""
+  property var previewWindows: []
+  property bool previewVisible: false
+  property real previewCenterX: 0
+  property real previewBottomY: 0
+  property string thumbnailDir: home + "/.cache/omarchy-dock/thumbs"
+  property var thumbCache: ({})
+  property int currentThumbBatch: 1
+  property int snapshotPending: 0
+  property var inFlightAddrs: ({})
+  property bool pendingPreviewShow: false
+
+  Timer {
+    id: previewDelay
+    interval: 180
+    onTriggered: {
+      if (!root.previewAppId || root.floatingId || root.menuOpen || !root.enabled) return
+      var wins = root.gatherWindowsForApp(root.previewAppId)
+      if (!wins.length) return
+      root.previewWindows = wins
+      // Snapshots run before the preview is shown so the panel never appears
+      // inside its own thumbnails; the preview pops in once they are ready.
+      root.pendingPreviewShow = true
+      root.snapshotWindows()
+    }
+  }
+
+  // Grace period: when the cursor leaves a dock item, the preview stays up
+  // long enough for the user to glide into it. Entering the preview panel
+  // cancels this; leaving both hides the preview.
+  Timer {
+    id: previewGrace
+    interval: 300
+    onTriggered: root.hidePreview()
+  }
 
   FileView {
     id: customIconsFile
@@ -662,6 +875,38 @@ Item {
     onExited: root.refreshItems()
   }
 
+  Component {
+    id: captureProcess
+    Process {
+      id: self
+      required property string jobAddress
+      required property string jobBatch
+      onExited: function(exitCode) {
+        if (exitCode === 0) root.thumbCache[self.jobAddress] = true
+        if (self.jobBatch === root.currentThumbBatch) {
+          root.snapshotPending--
+          if (root.snapshotPending === 0) root.applyThumbnails()
+        }
+        delete root.inFlightAddrs[self.jobAddress]
+        self.destroy()
+      }
+    }
+  }
+
+  property string activeThumbAddress: ""
+
+  function activeToplevelInfo() {
+    try {
+      var t = Hyprland.activeToplevel
+      if (!t) return null
+      var ipc = t.lastIpcObject || {}
+      var pos = root.array2(ipc.at)
+      var size = root.array2(ipc.size)
+      return { address: String(t.address || ""), x: pos[0], y: pos[1], w: size[0], h: size[1] }
+    } catch (error) {}
+    return null
+  }
+
   Process {
     id: nativeIconProcess
     onExited: function(exitCode) {
@@ -683,8 +928,38 @@ Item {
     function onAppsChanged() { root.refreshApps() }
   }
   Connections {
+    target: Hyprland
+    function onActiveToplevelChanged() {
+      // Capture a thumbnail whenever the active window changes: it is on top
+      // at that moment, so the grim capture is not occluded by other windows.
+      var info = root.activeToplevelInfo()
+      if (info && info.address && info.address !== root.activeThumbAddress) {
+        root.activeThumbAddress = info.address
+        root.captureActive(info)
+      }
+    }
+  }
+
+  Connections {
     target: ToplevelManager.toplevels
-    function onValuesChanged() { root.refreshItems() }
+    function onValuesChanged() {
+      root.refreshItems()
+      // The preview mirrors the live window set without touching the dock
+      // model: cards appear/disappear as windows open/close.
+      if (root.previewVisible && root.previewAppId) {
+        var wins = root.gatherWindowsForApp(root.previewAppId)
+        if (!wins.length) root.hidePreview()
+        else {
+          var thumbs = {}
+          var existing = root.previewWindows
+          for (var i = 0; i < existing.length; i++)
+            if (existing[i].thumbPath) thumbs[existing[i].address] = existing[i].thumbPath
+          for (var j = 0; j < wins.length; j++)
+            if (thumbs[wins[j].address]) wins[j].thumbPath = thumbs[wins[j].address]
+          root.previewWindows = wins
+        }
+      }
+    }
   }
   Connections {
     target: root.pluginRegistry
@@ -805,6 +1080,7 @@ Item {
               }
               onTooltipRequested: function(hoveredItem, isVisible, centerX) {
                 root.tooltipCenterX = centerX
+                root.onItemHoverChanged(hoveredItem, isVisible, centerX)
                 root.showTooltip(hoveredItem, isVisible)
               }
               onHoverPointerChanged: function(hoveredItem, isInside, pointerX) {
@@ -899,6 +1175,21 @@ Item {
       root.ghostOpacity = 1
       root.ghostScale = 1.18
     }
+  }
+
+  // Hover-to-preview lives in its own overlay layer window so it can extend
+  // far above the dock surface without touching the dock's layout or model.
+  WindowPreviewPanel {
+    id: previewPanel
+    previewVisible: root.previewVisible && !root.floatingId && !root.menuOpen
+    windowList: root.previewWindows
+    centerX: root.previewCenterX
+    bottomY: root.previewBottomY
+    iconSourceFor: function(data) { return root.iconSourceFor({ id: root.previewAppId }) }
+    thumbnailFor: function(data) { return root.thumbnailFor(data) }
+    onActivated: function(data) { root.activatePreviewWindow(data) }
+    onPreviewHoverEntered: previewGrace.stop()
+    onPreviewHoverExited: previewGrace.restart()
   }
 
   // The dragged icon lives in its own overlay window so it can follow the
