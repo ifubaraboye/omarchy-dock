@@ -13,6 +13,7 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Pin, unpin, new-window, and close actions
 - Live window previews on hover, with cached thumbnail fallbacks
 - Custom macOSicons, local PNG, and WebP icon overrides
+- macOS-style Alt+Tab application switcher (most-recently-used order)
 
 ## Install
 
@@ -82,6 +83,40 @@ terminal:
 omarchy-shell macos.dock hide
 omarchy-shell macos.dock show
 omarchy-shell macos.dock toggle
+```
+
+## Alt+Tab application switcher
+
+The plugin ships a macOS-style app switcher (a glass pill with the running
+applications in most-recently-used order). The plugin does not modify your
+Hyprland configuration; add these bindings to
+`~/.config/hypr/bindings.conf` to trigger it:
+
+```ini
+bind = ALT, TAB, exec, omarchy-shell -q macos.dock altTabNext
+bind = ALT SHIFT, TAB, exec, omarchy-shell -q macos.dock altTabPrev
+```
+
+Behavior:
+
+- Hold `Alt`, press `Tab` to cycle forward, `Shift + Tab` to cycle backward.
+  The first `Tab` selects the application after the currently focused one,
+  like macOS. Holding `Tab` repeats only if you add the `e` flag to the bind
+  (`bind = ALT, TAB, e, exec, ...`).
+- Release `Alt` to activate the selected application (its most recently
+  focused window, or launch it if none is open).
+- `Enter` activates the selection, `Escape` cancels without changing focus,
+  arrow keys move the selection, and the mouse can hover to select or click
+  to activate.
+- The switcher opens on the dock's primary screen and cycles applications
+  only — pinned-but-closed applications are never included.
+
+For testing without bindings:
+
+```bash
+omarchy-shell -q macos.dock altTabNext
+omarchy-shell -q macos.dock altTabPrev
+omarchy-shell -q macos.dock altTabCancel
 ```
 
 Icons are normalized into transparent macOS-style rounded PNGs and metadata is
