@@ -211,12 +211,16 @@ function orderPinned(order, pinnedIds) {
 
 // Continuous layout driven by the cursor. Each item's slot widens with its
 // magnification so icons never overlap and the total width grows as the cursor
-// approaches. Positions are based on the unscaled center estimate for stability.
+// approaches. The wrapper sits at the flow position and is centered in its
+// scaled slot by the delegate (width = slotWidth * scale), so a single
+// magnified icon stays centered in the dock. flowWidth is the true content
+// span (no trailing gap), keeping the row centered for any item count.
 function computeLayout(flow, cursorX, opts) {
     opts = opts || LAYOUT_OPTS
     var placements = {}
     var x = 0
     var cursorValid = typeof cursorX === "number" && cursorX >= 0
+    var lastEnd = 0
     for (var i = 0; i < flow.length; i++) {
         var item = flow[i]
         var slot = item.separator ? opts.separatorWidth : opts.slotWidth
@@ -230,21 +234,30 @@ function computeLayout(flow, cursorX, opts) {
         }
         placements[item.id] = { x: x, scale: scale, lift: lift, phantom: !!item.phantom }
         x += slot * scale + opts.spacing
+        lastEnd = x - opts.spacing
     }
-    var flowWidth = Math.max(0, x - opts.spacing)
-    return { placements: placements, flowWidth: flowWidth, totalWidth: flowWidth + 2 * opts.sidePadding }
+    return { placements: placements, flowWidth: lastEnd, totalWidth: lastEnd + 2 * opts.sidePadding }
 }
 
-// Returns the flow index the cursor currently falls over (0..flow.length).
+// Returns the flow index the cursor currently falls over (0..flow.length),
+// using the same scaled geometry as the rendered layout so the drop lands
+// on the icon the user sees.
 function insertionIndexFor(cursorX, flow, opts) {
     opts = opts || LAYOUT_OPTS
     if (!flow || flow.length === 0) return 0
     var x = 0
+    var cursorValid = typeof cursorX === "number" && cursorX >= 0
     for (var i = 0; i < flow.length; i++) {
         var item = flow[i]
         var slot = item.separator ? opts.separatorWidth : opts.slotWidth
-        if (cursorX < x + slot / 2) return i
-        x += slot + opts.spacing
+        var center = x + slot / 2
+        var scale = 1
+        if (cursorValid) {
+            var influence = Math.max(0, 1 - Math.abs(cursorX - center) / opts.radius)
+            scale = 1 + (opts.hoverScale - 1) * influence * influence
+        }
+        if (cursorX < x + slot * scale / 2) return i
+        x += slot * scale + opts.spacing
     }
     return flow.length
 }

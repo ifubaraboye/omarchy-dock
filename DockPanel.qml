@@ -1168,7 +1168,10 @@ Item {
           delegate: Item {
             id: wrapper
             required property string modelData
-            width: root.slotWidth
+            // The wrapper spans the scaled slot so the centered icon sits at
+            // the slot's visual center — a single magnified icon stays
+            // centered in the dock instead of drifting left.
+            width: root.slotWidth * targetScale
             height: 70
             x: 0
             property bool animating: false
@@ -1368,7 +1371,7 @@ Item {
     WlrLayershell.namespace: "macos-dock-spacer"
     WlrLayershell.exclusiveZone: root.enabled ? root.dockHeight + root.bottomMargin : 0
     anchors { bottom: true; left: true; right: true }
-    height: root.dockHeight + root.bottomMargin
+    implicitHeight: root.dockHeight + root.bottomMargin
     mask: Region {}
   }
 

@@ -139,9 +139,11 @@ PanelWindow {
           required property var modelData
           required property int index
 
-          // The dock's icon geometry scaled up, minus the running dot, the
+          // The icon geometry scaled up, minus the running dot, the
           // magnification springs and all interaction beyond hover/click.
-          width: root.iconSize + 8
+          // The item spans the slot so the centered icon sits at the slot's
+          // visual center — a single app icon stays centered in the HUD.
+          width: root.slotWidth
           height: root.iconSize + 18
           x: root.placements[modelData.id] ? root.placements[modelData.id].x : 0
 

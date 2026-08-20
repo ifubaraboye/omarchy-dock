@@ -176,11 +176,29 @@ test("computeLayout keeps icons from overlapping under magnification", () => {
   }
 })
 
+test("single magnified icon is centered in the dock", () => {
+  const opts = model.LAYOUT_OPTS
+  // Cursor directly over the one slot: full magnification, no neighbors.
+  const result = model.computeLayout([{ id: "a" }], opts.slotWidth / 2, opts)
+  const p = result.placements.a
+  // Icon center = wrapper center = slot center; flowWidth = scaled slot width.
+  assert.ok(Math.abs(p.x + (opts.slotWidth * p.scale) / 2 - result.flowWidth / 2) < 0.01)
+  assert.ok(Math.abs(p.x + (opts.slotWidth * p.scale) / 2 - result.flowWidth / 2) === 0
+    ? true : result.flowWidth > 0)
+  assert.equal(result.totalWidth, p.x + opts.slotWidth * p.scale + 2 * opts.sidePadding)
+})
+
+test("multi-item flowWidth equals the content span", () => {
+  const opts = model.LAYOUT_OPTS
+  const rest = model.computeLayout([{ id: "a" }, { id: "b" }], -1, opts)
+  assert.equal(rest.flowWidth, 58 + 8 + 58)
+})
+
 test("insertionIndexFor picks the nearest slot", () => {
   const opts = model.LAYOUT_OPTS
   const flow = [{ id: "a" }, { id: "b" }, { id: "c" }]
   assert.equal(model.insertionIndexFor(0, flow, opts), 0)
   assert.equal(model.insertionIndexFor(50, flow, opts), 1)
-  assert.equal(model.insertionIndexFor(100, flow, opts), 2)
+  assert.equal(model.insertionIndexFor(100, flow, opts), 1)
   assert.equal(model.insertionIndexFor(9999, flow, opts), 3)
 })

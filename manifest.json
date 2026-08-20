@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "macos.dock",
   "name": "macOS-style Dock",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "author": "ifubaraboye",
   "description": "A compact, glassy application dock for Omarchy.",
   "kinds": ["panel"],
