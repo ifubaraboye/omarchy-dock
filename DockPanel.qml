@@ -47,7 +47,7 @@ Item {
   // slide-away behavior remains available for a later settings toggle.
   property bool autoHide: false
   property int dockHeight: 101
-  property int bottomMargin: 22
+  property int bottomMargin: 8
   property int iconSize: 50
   property real hoveredMouseX: -1
   property string hoveredItemId: ""
@@ -1107,6 +1107,11 @@ Item {
     // Config-file binds load before this runtime eval, so a user's own bind
     // for the same combo takes precedence.
     if (!root.altTabBindProcess.running) root.altTabBindProcess.running = true
+    // The shell applies the config-file binds (tiling.lua etc.) AFTER this
+    // Component.onCompleted eval, clobbering our ALT+TAB takeover. Re-apply
+    // the eval on a short retry window until the config binds have landed;
+    // the eval is idempotent (unbind then bind).
+    root.altTabBindRetry.start()
     Qt.callLater(function() { root.dockReady = true })
   }
 
@@ -1115,9 +1120,25 @@ Item {
     command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"]
   }
 
+  Timer {
+    id: altTabBindRetry
+    interval: 1500
+    repeat: true
+    property int attempts: 0
+    onTriggered: {
+      root.altTabBindRetry.attempts++
+      if (root.altTabBindRetry.attempts > 8) root.altTabBindRetry.stop()
+      else if (!root.altTabBindProcess.running) root.altTabBindProcess.running = true
+    }
+  }
+
   Process {
     id: altTabBindProcess
-    command: ["hyprctl", "eval", "o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"]
+    // Take over the default Omarchy ALT+TAB window cycling so the macOS-style
+    // app switcher HUD is the primary alt-tab. The defaults bind ALT+TAB twice
+    // (cycle + bring-to-top), so both must be unbound first. ALT+GRAVE stays
+    // as the dedicated fallback combo.
+    command: ["hyprctl", "eval", "hl.unbind(\"ALT + TAB\") hl.unbind(\"ALT + SHIFT + TAB\") o.bind(\"ALT + TAB\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + TAB\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\") o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"]
   }
 
   PanelWindow {

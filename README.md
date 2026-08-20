@@ -4,10 +4,6 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 
 ![Omarchy macOS dock preview](assets/dock-preview.png)
 
-### Alt+Tab application switcher
-
-![Alt+Tab application switcher preview](assets/alt-tab-preview.png)
-
 ## Features
 
 - Glassy floating dock surface

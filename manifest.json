@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "macos.dock",
   "name": "macOS-style Dock",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "author": "ifubaraboye",
-  "description": "A compact, glassy application dock for Omarchy.",
+  "description": "A compact, glassy application dock for Omarchy, with a macOS style Alt+Tab app switcher.",
   "kinds": ["panel"],
   "keepLoaded": true,
   "entryPoints": {
