@@ -13,6 +13,11 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Pin, unpin, new-window, and close actions
 - Live window previews on hover, with cached thumbnail fallbacks
 - Custom macOSicons, local PNG, and WebP icon overrides
+- Point-and-click icon picker: right-click any app and choose "Get Info…" to
+  change its icon from macOSicons, your own image, or a direct image URL — no
+  terminal needed
+- "Manage Icons…" lets you assign icons to *any* installed app, even before it
+  first appears on the dock
 - macOS-style Alt+Tab application switcher (most-recently-used order)
 - Tiling window adaptation: while the dock is shown, it reserves its footprint
   as a Wayland exclusive zone, so tiled windows never overlap it
@@ -74,12 +79,30 @@ before installing.
 
 ## Custom icons
 
-Use the helper to assign an icon from macOSicons, a direct image URL, or a
-local image:
+### Point-and-click
+
+No terminal required:
+
+- **Right-click an app on the dock → "Get Info…"** opens an icon picker with
+  suggested icons from macOSicons (searched by the app's name), a live search
+  box, and options to use your own image or a direct image URL.
+- **Right-click any app or empty dock space → "Manage Icons…"** browses every
+  installed app. You can change an icon for an app that isn't on the dock yet —
+  the icon is stored by app id, so it appears automatically the moment the app
+  opens.
+
+The picker applies changes instantly through the same helper the CLI uses
+(download, trim, rounded corners, persistence) and the dock updates live.
+
+### Command line
+
+For scripting, the same operations are available from a terminal:
 
 ```bash
+omarchy-dock-icon search figma
 omarchy-dock-icon set code figma-i3FsrkYvf6
 omarchy-dock-icon set code --file ~/Pictures/code.png
+omarchy-dock-icon set code https://example.com/icon.png
 omarchy-dock-icon list
 omarchy-dock-icon clear code
 omarchy-dock-icon folder
