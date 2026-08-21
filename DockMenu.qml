@@ -26,7 +26,7 @@ PanelWindow {
     x: Math.max(12, Math.min(root.requestedPosition.x, root.width - width - 12))
     y: Math.max(12, Math.min(root.requestedPosition.y, root.height - height - 12))
     width: 170
-    height: 3 * 38 + 16
+    height: 5 * 38 + 2 * 10 + 16
     radius: 14
     color: Util.alpha(Color.background, 0.96)
     border.color: Util.alpha(Color.foreground, 0.18)
@@ -39,18 +39,23 @@ PanelWindow {
 
       Repeater {
         model: [
-          { action: "togglePin", label: root.itemData && root.itemData.pinned ? "Unpin" : "Pin" },
-          { action: "newWindow", label: "New Window" },
-          { action: "close", label: "Close" }
+          { action: "setIcon", label: "Get Info", separator: false },
+          { action: "", label: "", separator: true },
+          { action: "togglePin", label: root.itemData && root.itemData.pinned ? "Unpin" : "Pin", separator: false },
+          { action: "newWindow", label: "New Window", separator: false },
+          { action: "close", label: "Close", separator: false },
+          { action: "", label: "", separator: true },
+          { action: "manageIcons", label: "Manage Icons", separator: false }
         ]
         delegate: Rectangle {
           required property var modelData
           width: parent.width
-          height: 36
+          height: modelData.separator ? 10 : 36
           radius: 8
-          color: buttonMouse.containsMouse ? Util.alpha(Color.foreground, 0.10) : "transparent"
+          color: !modelData.separator && buttonMouse.containsMouse ? Util.alpha(Color.foreground, 0.10) : "transparent"
 
           Text {
+            visible: !modelData.separator
             anchors.fill: parent
             anchors.leftMargin: 10
             verticalAlignment: Text.AlignVCenter
@@ -59,10 +64,23 @@ PanelWindow {
             font.family: Style.font.family
             font.pixelSize: Style.font.body
           }
+
+          Rectangle {
+            visible: modelData.separator
+            anchors.left: parent.left
+            anchors.leftMargin: 10
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            height: 1
+            color: Util.alpha(Color.foreground, 0.12)
+          }
+
           MouseArea {
             id: buttonMouse
             anchors.fill: parent
             hoverEnabled: true
+            enabled: !modelData.separator
             onClicked: {
               root.actionTriggered(modelData.action, root.itemData)
               root.opened = false

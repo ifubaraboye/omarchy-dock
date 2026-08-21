@@ -201,9 +201,13 @@ PanelWindow {
           root.cancel(); event.accepted = true; return
         }
         if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-          // With the Hyprland binds configured, the bound key never arrives
-          // (the compositor consumes it). Without them this keeps the HUD
-          // usable.
+          // Bound via Hyprland (omarchy-shell altTabNext/Prev) — compositor
+          // consumes the key, so ignore here to avoid double-step when both
+          // paths fire. Keep fallback only if the bind is missing: check by
+          // seeing if the HUD was opened (active). When active, IPC drives
+          // navigation; Tab reaching the panel means the bind was not consumed.
+          // To avoid double-step, do not advance here when active.
+          if (root.active) { event.accepted = true; return }
           if (event.key === Qt.Key_Backtab) root.prev(); else root.next()
           event.accepted = true; return
         }

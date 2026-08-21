@@ -5,11 +5,14 @@ user_home="${HOME:?HOME is not set}"
 icon_dir="$user_home/.config/omarchy/icons"
 map_file="$user_home/.config/omarchy/dock-icons.json"
 command_name="${0##*/}"
+# Tests can inject a fake downloader through CURL_CMD.
+curl_cmd="${CURL_CMD:-curl}"
 
 die() { printf '%s\n' "$command_name: $*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
 Usage:
+  omarchy-dock-icon search <query>
   omarchy-dock-icon set <app-id> <macosicons-page-or-image-url>
   omarchy-dock-icon set <app-id> --file <local-image>
   omarchy-dock-icon clear <app-id>
@@ -20,7 +23,7 @@ EOF
 
 require_tools() {
   command -v python3 >/dev/null || die "python3 is required"
-  command -v curl >/dev/null || die "curl is required"
+  command -v "$curl_cmd" >/dev/null || die "curl is required"
   command -v magick >/dev/null || command -v convert >/dev/null || die "ImageMagick is required"
   command -v identify >/dev/null || die "ImageMagick identify is required"
 }
@@ -30,6 +33,37 @@ canonical_id() {
   value="${value%.desktop}"
   [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid app id: $1"
   printf '%s' "$value"
+}
+
+search_icons() {
+  local query="$1" payload response
+  payload="$(python3 -c 'import json, sys; print(json.dumps({"query": sys.argv[1], "searchOptions": {"filters": [], "hitsPerPage": 24, "page": 1, "sort": ["downloads:desc"]}}))' "$query")"
+  response="$("$curl_cmd" -fsSL -A "Mozilla/5.0" --retry 2 --connect-timeout 10 --max-time 30 \
+    -X POST "https://macosicons.com/api/search" -H "Content-Type: application/json" \
+    -d "$payload" 2>/dev/null || true)"
+  python3 - "$response" <<'PY'
+import json, sys
+
+raw = sys.argv[1]
+try:
+    data = json.loads(raw) if raw else {}
+except (json.JSONDecodeError, TypeError):
+    data = {}
+hits = data.get("hits") if isinstance(data, dict) else []
+out = []
+for hit in hits:
+    if not isinstance(hit, dict) or not hit.get("iOSUrl"):
+        continue
+    out.append({
+        "appName": hit.get("appName", ""),
+        "appSlug": hit.get("appSlug", ""),
+        "objectID": hit.get("objectID", ""),
+        "iOSUrl": hit.get("iOSUrl", ""),
+        "lowResPngUrl": hit.get("lowResPngUrl", ""),
+        "downloads": hit.get("downloads", 0),
+    })
+print(json.dumps(out, separators=(",", ":")))
+PY
 }
 
 extract_image_url() {
@@ -132,17 +166,21 @@ set_icon() {
       if [[ "$input" =~ ^https?://macosicons\.com/ ]]; then
         source="$input"
       elif [[ "$input" =~ ^https?:// ]]; then
-        die "unsupported URL; use a macosicons page or direct CDN image URL"
+        # Any direct image URL (GitHub assets, personal hosting, ...). The
+        # downloaded bytes are still validated as PNG/WebP below.
+        image_url="$input"
       else
         source="https://macosicons.com/icon/$input"
       fi
-      local page_file
-      page_file="$(mktemp)"
-      trap 'rm -f "$temporary" "$page_file"' RETURN
-      curl -fL --retry 2 --connect-timeout 10 --max-time 30 -o "$page_file" "$source"
-      image_url="$(extract_image_url "$page_file" "$input")"
+      if [[ -z "$image_url" ]]; then
+        local page_file
+        page_file="$(mktemp)"
+        trap 'rm -f "$temporary" "$page_file"' RETURN
+        "$curl_cmd" -fL --retry 2 --connect-timeout 10 --max-time 30 -o "$page_file" "$source"
+        image_url="$(extract_image_url "$page_file" "$input")"
+      fi
     fi
-    curl -fL --retry 2 --connect-timeout 10 --max-time 60 -o "$temporary" "$image_url"
+    "$curl_cmd" -fL --retry 2 --connect-timeout 10 --max-time 60 -o "$temporary" "$image_url"
   fi
 
   # Validate the downloaded asset as an image. The downloaded bytes are never
@@ -214,6 +252,7 @@ PY
 
 require_tools
 case "${1:-}" in
+  search) [[ $# -eq 2 ]] || { usage; exit 2; }; search_icons "$2" ;;
   set)
     [[ $# -ge 3 ]] || { usage; exit 2; }
     if [[ "$3" == "--file" ]]; then

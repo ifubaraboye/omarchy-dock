@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "id": "macos.dock",
-  "name": "macOS-style Dock",
-  "version": "0.1.11",
+  "name": "macOS Style Dock",
+  "version": "0.1.13",
   "author": "ifubaraboye",
-  "description": "A compact, glassy application dock for Omarchy, with a macOS style Alt+Tab app switcher.",
+  "description": "A compact, glassy, configurable macOS style dock with pinning and Alt+Tab app switcher. Right click to change icons on the dock.",
   "kinds": ["panel"],
   "keepLoaded": true,
   "entryPoints": {

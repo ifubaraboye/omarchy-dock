@@ -40,6 +40,7 @@ Item {
   property bool conflictDetected: false
   property bool dockHovered: false
   property bool menuOpen: false
+  property bool pickerOpen: false
   property bool enabled: true
   onEnabledChanged: if (!root.enabled) root.hidePreview()
   property bool dockReady: false
@@ -62,6 +63,9 @@ Item {
   property var nativeIconQueue: []
   property var currentNativeIconJob: null
   property int nativeIconRevision: 0
+  // The icon picker helper (~/.local/bin/omarchy-dock-icon) resolved at shell
+  // start; falls back to PATH lookup so the GUI works however it was installed.
+  property string helperPath: root.home + "/.local/bin/omarchy-dock-icon"
 
   // Layout & drag state. The Repeater model (dockItems) is the stable identity
   // list of ids, replaced only when the id set changes; reorders go through
@@ -510,7 +514,23 @@ Item {
     if (action === "togglePin") root.pinnedIds = DockModel.togglePinned(root.pinnedIds, item.id)
     else if (action === "newWindow") handleClick({ id: item.id, name: item.name, running: false })
     else if (action === "close") closeWindow(item.id)
+    else if (action === "setIcon") root.openIconPicker(item.id, item.name, false)
+    else if (action === "manageIcons") root.openIconManager()
     if (action === "togglePin") { refreshItems(); savePinned() }
+  }
+
+  function openIconPicker(appId, appName, fromManage) {
+    root.menuOpen = false
+    root.pickerOpen = true
+    root.hidePreview()
+    iconPicker.openForApp(appId, appName, fromManage)
+  }
+
+  function openIconManager() {
+    root.menuOpen = false
+    root.pickerOpen = true
+    root.hidePreview()
+    iconPicker.openManage()
   }
 
   function closeWindow(id) {
@@ -651,7 +671,7 @@ Item {
     if (!item || item.separator) return
     if (isVisible) {
       root.previewCenterX = centerX
-      if (root.floatingId || root.menuOpen || !root.enabled) return
+      if (root.floatingId || root.menuOpen || root.pickerOpen || !root.enabled) return
       if (!item.running) { root.hidePreview(); return }
       if (root.previewAppId !== item.id) root.hidePreview()
       root.previewAppId = item.id
@@ -926,7 +946,7 @@ Item {
     id: previewDelay
     interval: 180
     onTriggered: {
-      if (!root.previewAppId || root.floatingId || root.menuOpen || !root.enabled) return
+      if (!root.previewAppId || root.floatingId || root.menuOpen || root.pickerOpen || !root.enabled) return
       var wins = root.gatherWindowsForApp(root.previewAppId)
       if (!wins.length) return
       root.previewWindows = wins
@@ -1099,19 +1119,20 @@ Item {
     root.checkDockConflict()
     root.refreshApps()
     root.refreshItems()
+    if (!helperResolveProcess.running) helperResolveProcess.running = true
     // The alt-tab HUD opens/closes on keypresses; Hyprland's default layer
     // fade would add a visible fade-in. Disable compositor animation for
     // both layer namespaces so the HUD pops in instantly.
-    if (!root.layerRuleProcess.running) root.layerRuleProcess.running = true
+    if (!layerRuleProcess.running) layerRuleProcess.running = true
     // Register the app-switcher keybinds so the HUD works out of the box.
     // Config-file binds load before this runtime eval, so a user's own bind
     // for the same combo takes precedence.
-    if (!root.altTabBindProcess.running) root.altTabBindProcess.running = true
+if (!altTabBindProcess.running) altTabBindProcess.running = true
     // The shell applies the config-file binds (tiling.lua etc.) AFTER this
     // Component.onCompleted eval, clobbering our ALT+TAB takeover. Re-apply
     // the eval on a short retry window until the config binds have landed;
     // the eval is idempotent (unbind then bind).
-    root.altTabBindRetry.start()
+    altTabBindRetry.start()
     Qt.callLater(function() { root.dockReady = true })
   }
 
@@ -1126,9 +1147,9 @@ Item {
     repeat: true
     property int attempts: 0
     onTriggered: {
-      root.altTabBindRetry.attempts++
-      if (root.altTabBindRetry.attempts > 8) root.altTabBindRetry.stop()
-      else if (!root.altTabBindProcess.running) root.altTabBindProcess.running = true
+      altTabBindRetry.attempts++
+      if (altTabBindRetry.attempts > 8) altTabBindRetry.stop()
+      else if (!altTabBindProcess.running) altTabBindProcess.running = true
     }
   }
 
@@ -1138,7 +1159,7 @@ Item {
     // app switcher HUD is the primary alt-tab. The defaults bind ALT+TAB twice
     // (cycle + bring-to-top), so both must be unbound first. ALT+GRAVE stays
     // as the dedicated fallback combo.
-    command: ["hyprctl", "eval", "hl.unbind(\"ALT + TAB\") hl.unbind(\"ALT + SHIFT + TAB\") o.bind(\"ALT + TAB\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + TAB\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\") o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"]
+    command: ["hyprctl", "eval", "hl.unbind(\"ALT + TAB\") hl.unbind(\"ALT + SHIFT + TAB\") hl.unbind(\"ALT + GRAVE\") hl.unbind(\"ALT + SHIFT + GRAVE\") o.bind(\"ALT + TAB\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + TAB\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\") o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"]
   }
 
   PanelWindow {
@@ -1163,7 +1184,7 @@ Item {
       color: Util.alpha(Color.background, 0.88)
       border.color: Util.alpha(Color.foreground, 0.20)
       border.width: 1
-      opacity: root.autoHide && !root.enabled ? 0.55 : (root.menuOpen || root.dockHovered ? 1 : 0.96)
+      opacity: root.autoHide && !root.enabled ? 0.55 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
 
       Behavior on width {
         NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
@@ -1277,6 +1298,7 @@ Item {
         id: mouseArea
         anchors.fill: parent
         z: -1
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
         onEntered: { root.dockHovered = true; root.enabled = true; hideTimer.stop() }
         onExited: {
@@ -1287,6 +1309,9 @@ Item {
         onPositionChanged: {
           root.hoveredMouseX = mouseArea.mapToItem(null, mouseX, mouseY).x
           root.applyLayout()
+        }
+        onClicked: function(mouse) {
+          if (mouse.button === Qt.RightButton) root.openIconManager()
         }
       }
     }
@@ -1327,13 +1352,36 @@ Item {
   Timer {
     id: hideTimer
     interval: 2000
-    onTriggered: if (root.autoHide && !root.menuOpen && !root.dockHovered) root.enabled = false
+    onTriggered: if (root.autoHide && !root.menuOpen && !root.pickerOpen && !root.dockHovered) root.enabled = false
   }
 
   DockMenu {
     id: dockMenu
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false
+  }
+
+  IconPickerPanel {
+    id: iconPicker
+    shell: root.shell
+    customIcons: root.customIcons
+    iconSourceFor: function(id) { return root.iconSourceFor(id) }
+    helperPath: root.helperPath
+    onOpenChanged: if (!open) root.pickerOpen = false
+  }
+
+  // Resolve the icon helper: prefer the documented install location, fall
+  // back to PATH. The picker surface shows a clear error if neither exists.
+  Process {
+    id: helperResolveProcess
+    command: ["bash", "-c", "if [ -x \"$HOME/.local/bin/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.local/bin/omarchy-dock-icon\"; else command -v omarchy-dock-icon || true; fi"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var resolved = String(text || "").trim()
+        if (resolved) root.helperPath = resolved
+      }
+    }
   }
 
   // Persistence is written only after the settle animation finishes, matching
