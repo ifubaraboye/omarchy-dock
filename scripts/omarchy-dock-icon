@@ -7,6 +7,11 @@ map_file="$user_home/.config/omarchy/dock-icons.json"
 command_name="${0##*/}"
 # Tests can inject a fake downloader through CURL_CMD.
 curl_cmd="${CURL_CMD:-curl}"
+max_download_size="10M"
+max_page_size="2M"
+max_image_width=4096
+max_image_height=4096
+max_image_pixels=16777216
 
 die() { printf '%s\n' "$command_name: $*" >&2; exit 1; }
 usage() {
@@ -39,6 +44,7 @@ search_icons() {
   local query="$1" payload response
   payload="$(python3 -c 'import json, sys; print(json.dumps({"query": sys.argv[1], "searchOptions": {"filters": [], "hitsPerPage": 24, "page": 1, "sort": ["downloads:desc"]}}))' "$query")"
   response="$("$curl_cmd" -fsSL -A "Mozilla/5.0" --retry 2 --connect-timeout 10 --max-time 30 \
+    --proto '=https' --proto-redir '=https' \
     -X POST "https://macosicons.com/api/search" -H "Content-Type: application/json" \
     -d "$payload" 2>/dev/null || true)"
   python3 - "$response" <<'PY'
@@ -93,13 +99,23 @@ PY
 }
 
 round_icon() {
-  local source="$1" destination="$2" tool width height radius masked
+  local source="$1" destination="$2" tool width height pixels radius masked
   if command -v magick >/dev/null; then tool="magick"; else tool="convert"; fi
+
+  # Check dimensions before any operation that decodes the image pixels.
+  read -r width height < <(identify -ping -format '%w %h' "$source" 2>/dev/null) \
+    || die "downloaded file has invalid image dimensions"
+  [[ "$width" -le "$max_image_width" && "$height" -le "$max_image_height" ]] \
+    || die "image dimensions exceed ${max_image_width}x${max_image_height} pixels"
+  pixels=$((width * height))
+  (( pixels <= max_image_pixels )) \
+    || die "image dimensions exceed $max_image_pixels pixels"
+
   # Remove transparent padding so icons with a small painted logo do not
   # appear smaller than the rest of the dock.
   "$tool" "$source" -trim +repage "$destination"
-  width="$(identify -format '%w' "$destination")"
-  height="$(identify -format '%h' "$destination")"
+  width="$(identify -ping -format '%w' "$destination")"
+  height="$(identify -ping -format '%h' "$destination")"
   radius=$(( (width < height ? width : height) * 22 / 100 ))
   masked="${destination}.masked"
   "$tool" "$destination" -alpha on \
@@ -160,14 +176,14 @@ set_icon() {
     cp -- "$3" "$temporary"
   else
     source="$input"
-    if [[ "$input" =~ ^https?://s3-new\.macosicons\.com/ ]]; then
+    if [[ "$input" =~ ^https://s3-new\.macosicons\.com/ ]]; then
       image_url="$input"
     else
-      if [[ "$input" =~ ^https?://macosicons\.com/ ]]; then
+      if [[ "$input" =~ ^https://macosicons\.com/ ]]; then
         source="$input"
-      elif [[ "$input" =~ ^https?:// ]]; then
-        # Any direct image URL (GitHub assets, personal hosting, ...). The
-        # downloaded bytes are still validated as PNG/WebP below.
+      elif [[ "$input" =~ ^https:// ]]; then
+        # Any direct HTTPS image URL (GitHub assets, personal hosting, ...).
+        # The downloaded bytes are still validated as PNG/WebP below.
         image_url="$input"
       else
         source="https://macosicons.com/icon/$input"
@@ -176,17 +192,21 @@ set_icon() {
         local page_file
         page_file="$(mktemp)"
         trap 'rm -f "$temporary" "$page_file"' RETURN
-        "$curl_cmd" -fL --retry 2 --connect-timeout 10 --max-time 30 -o "$page_file" "$source"
+        "$curl_cmd" -fL --retry 2 --connect-timeout 10 --max-time 30 \
+          --proto '=https' --proto-redir '=https' --max-filesize "$max_page_size" \
+          -o "$page_file" "$source"
         image_url="$(extract_image_url "$page_file" "$input")"
       fi
     fi
-    "$curl_cmd" -fL --retry 2 --connect-timeout 10 --max-time 60 -o "$temporary" "$image_url"
+    "$curl_cmd" -fL --retry 2 --connect-timeout 10 --max-time 60 \
+      --proto '=https' --proto-redir '=https' --max-filesize "$max_download_size" \
+      -o "$temporary" "$image_url"
   fi
 
   # Validate the downloaded asset as an image. The downloaded bytes are never
   # passed to a shell or interpreter; ImageMagick only inspects the file type.
   local image_format
-  image_format="$(identify -format '%m' "$temporary" 2>/dev/null || true)"
+  image_format="$(identify -ping -format '%m' "$temporary" 2>/dev/null || true)"
   case "$image_format" in
     PNG|WEBP) ;;
     *) die "downloaded file is not a valid PNG or WebP image" ;;
