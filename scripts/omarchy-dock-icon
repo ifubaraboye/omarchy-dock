@@ -103,7 +103,7 @@ round_icon() {
   if command -v magick >/dev/null; then tool="magick"; else tool="convert"; fi
 
   # Check dimensions before any operation that decodes the image pixels.
-  read -r width height < <(identify -ping -format '%w %h' "$source" 2>/dev/null) \
+  read -r width height < <(identify -ping -format '%w %h\n' "$source" 2>/dev/null) \
     || die "downloaded file has invalid image dimensions"
   [[ "$width" -le "$max_image_width" && "$height" -le "$max_image_height" ]] \
     || die "image dimensions exceed ${max_image_width}x${max_image_height} pixels"
