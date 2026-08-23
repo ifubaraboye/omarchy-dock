@@ -1,0 +1,97 @@
+name: Apply Dock Visual Refinement
+
+on:
+  push:
+    branches:
+      - macos-dock-visual-refinement
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: macos-dock-visual-refinement
+          fetch-depth: 0
+
+      - name: Apply visual refinement
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          panel = Path('DockPanel.qml')
+          text = panel.read_text()
+
+          replacements = {
+              'property int dockHeight: 101': 'property int dockHeight: 78',
+              'property int iconSize: 50': 'property int iconSize: 54',
+              'property int slotWidth: 58': 'property int slotWidth: 60',
+              'property int slotSpacing: 8': 'property int slotSpacing: 6',
+              'property int sidePadding: 18': 'property int sidePadding: 12',
+              'property int separatorWidth: 14': 'property int separatorWidth: 12',
+              'anchors.verticalCenterOffset: 6': 'anchors.verticalCenterOffset: 0',
+              'height: 70\n\n        Behavior on width': 'height: 62\n\n        Behavior on width',
+              'height: 70\n            x: 0': 'height: 62\n            x: 0',
+              'radius: 22\n      color: Util.alpha(Color.background, 0.88)\n      border.color: Util.alpha(Color.foreground, 0.20)': 'radius: 20\n      color: Util.alpha(Color.background, 0.66)\n      border.color: Util.alpha(Color.foreground, 0.14)',
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'missing expected DockPanel pattern: {old!r}')
+              text = text.replace(old, new, 1)
+
+          marker = '''      Behavior on opacity { NumberAnimation { duration: 180 } }\n\n      Item {'''
+          replacement = '''      Behavior on opacity { NumberAnimation { duration: 180 } }\n\n      // Subtle top-edge highlight gives the translucent surface a glass-like\n      // material instead of reading as a flat black panel.\n      Rectangle {\n        anchors { left: parent.left; right: parent.right; top: parent.top }\n        height: 1\n        radius: 1\n        color: Util.alpha(Color.foreground, 0.10)\n        opacity: 0.9\n      }\n\n      Item {'''
+          if marker not in text:
+              raise SystemExit('missing dock glass highlight insertion point')
+          text = text.replace(marker, replacement, 1)
+
+          panel.write_text(text)
+
+          model = Path('DockModel.js')
+          text = model.read_text()
+          replacements = {
+              'slotWidth: 58,': 'slotWidth: 60,',
+              'spacing: 8,': 'spacing: 6,',
+              'iconSize: 50,': 'iconSize: 54,',
+              'hoverScale: 1.46,': 'hoverScale: 1.36,',
+              'radius: 104,': 'radius: 96,',
+              'sidePadding: 18,': 'sidePadding: 12,',
+              'separatorWidth: 14': 'separatorWidth: 12',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'missing expected DockModel pattern: {old!r}')
+              text = text.replace(old, new, 1)
+          model.write_text(text)
+          PY
+
+      - name: Validate changed QML/JS structure
+        run: |
+          grep -q 'property int dockHeight: 78' DockPanel.qml
+          grep -q 'property int iconSize: 54' DockPanel.qml
+          grep -q 'slotWidth: 60' DockModel.js
+          grep -q 'hoverScale: 1.36' DockModel.js
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('DockPanel.qml').read_text()
+          assert p.count('property int dockHeight: 78') == 1
+          assert p.count('property int iconSize: 54') == 1
+          assert 'color: Util.alpha(Color.background, 0.66)' in p
+          assert 'height: 1' in p
+          print('visual refinement checks passed')
+          PY
+
+      - name: Commit implementation and remove bootstrap workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add DockPanel.qml DockModel.js
+          git rm .github/workflows/apply-dock-visual-refinement.yml
+          git commit -m 'feat: refine dock visual proportions and glass treatment'
+          git push origin macos-dock-visual-refinement
