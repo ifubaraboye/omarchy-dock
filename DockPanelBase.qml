@@ -1124,10 +1124,12 @@ Item {
     // fade would add a visible fade-in. Disable compositor animation for
     // both layer namespaces so the HUD pops in instantly.
     if (!layerRuleProcess.running) layerRuleProcess.running = true
+    // Best-effort glass blur: if Hyprland supports it, the 0.50 tint becomes frosted glass.
+    if (!blurLayerProcess.running) blurLayerProcess.running = true
     // Register the app-switcher keybinds so the HUD works out of the box.
     // Config-file binds load before this runtime eval, so a user's own bind
     // for the same combo takes precedence.
-if (!altTabBindProcess.running) altTabBindProcess.running = true
+    if (!altTabBindProcess.running) altTabBindProcess.running = true
     // The shell applies the config-file binds (tiling.lua etc.) AFTER this
     // Component.onCompleted eval, clobbering our ALT+TAB takeover. Re-apply
     // the eval on a short retry window until the config binds have landed;
@@ -1139,6 +1141,14 @@ if (!altTabBindProcess.running) altTabBindProcess.running = true
   Process {
     id: layerRuleProcess
     command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"]
+  }
+
+  // Glass blur — attempt to enable compositor backdrop blur behind the dock layers.
+  // Best-effort: if Hyprland/Omarchy has blur disabled or the API is missing, the
+  // dock simply falls back to the tinted translucent surface (0.50 alpha) already set.
+  Process {
+    id: blurLayerProcess
+    command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock\" }, blur = true }) hl.layer_rule({ match = { namespace = \"macos-dock-material\" }, blur = true })"]
   }
 
   Timer {
@@ -1185,6 +1195,15 @@ if (!altTabBindProcess.running) altTabBindProcess.running = true
       border.color: Util.alpha(Color.foreground, 0.04)
       border.width: 1
       opacity: root.autoHide && !root.enabled ? 0.55 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
+
+      // Glass highlight — subtle top edge that makes the tinted surface read as glass. Inside the
+      // dockSurface so it follows the same radius/clipping and does not create a double border.
+      Rectangle {
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        height: 1
+        radius: 1
+        color: Util.alpha(Color.foreground, 0.10)
+      }
 
       Behavior on width {
         NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
