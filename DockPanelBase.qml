@@ -1254,7 +1254,7 @@ Item {
 
             Behavior on x {
               enabled: wrapper.animating
-              SpringAnimation { spring: 4.5; damping: 0.85; mass: 1 }
+              SpringAnimation { spring: 4.5; damping: 3.6; mass: 1 }
             }
 
             Component.onCompleted: {
@@ -1499,8 +1499,8 @@ Item {
       width: root.iconSize * root.ghostScale + 16
       height: root.iconSize * root.ghostScale + 16
       opacity: root.ghostOpacity
-      Behavior on x { SpringAnimation { spring: 4.5; damping: 0.85; mass: 1 } }
-      Behavior on y { SpringAnimation { spring: 4.5; damping: 0.85; mass: 1 } }
+      Behavior on x { SpringAnimation { spring: 4.5; damping: 3.6; mass: 1 } }
+      Behavior on y { SpringAnimation { spring: 4.5; damping: 3.6; mass: 1 } }
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
       Rectangle {
