@@ -47,9 +47,9 @@ Item {
   // Keep the prototype visible while validating layout and interaction. The
   // slide-away behavior remains available for a later settings toggle.
   property bool autoHide: false
-  property int dockHeight: 101
+  property int dockHeight: 78
   property int bottomMargin: 8
-  property int iconSize: 50
+  property int iconSize: 54
   property real hoveredMouseX: -1
   property string hoveredItemId: ""
   property var tooltipItem: null
@@ -72,10 +72,10 @@ Item {
   // applyLayout(), which only mutates existing delegates, so no delegate is
   // ever torn down by dragging. Mutable pinned/running state lives in each
   // delegate's liveData binding so state changes never rebuild the Repeater.
-  property int slotWidth: 58
-  property int slotSpacing: 8
-  property int sidePadding: 18
-  property int separatorWidth: 14
+  property int slotWidth: 60
+  property int slotSpacing: 6
+  property int sidePadding: 12
+  property int separatorWidth: 12
   property string floatingId: ""
   property var tempDrag: ({ id: "", index: -1 })
   property var placements: ({})
@@ -1180,9 +1180,9 @@ if (!altTabBindProcess.running) altTabBindProcess.running = true
       anchors.bottomMargin: root.autoHide && !root.enabled ? -root.dockHeight + 14 : root.bottomMargin
       width: root.layoutWidth
       height: root.dockHeight
-      radius: 22
-      color: Util.alpha(Color.background, 0.88)
-      border.color: Util.alpha(Color.foreground, 0.20)
+      radius: 20
+      color: Util.alpha(Color.background, 0.66)
+      border.color: Util.alpha(Color.foreground, 0.14)
       border.width: 1
       opacity: root.autoHide && !root.enabled ? 0.55 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
 
@@ -1194,12 +1194,22 @@ if (!altTabBindProcess.running) altTabBindProcess.running = true
       }
       Behavior on opacity { NumberAnimation { duration: 180 } }
 
+      // Subtle top-edge highlight gives the translucent surface a glass-like
+      // material instead of reading as a flat black panel.
+      Rectangle {
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        height: 1
+        radius: 1
+        color: Util.alpha(Color.foreground, 0.10)
+        opacity: 0.9
+      }
+
       Item {
         id: dockRow
         anchors.centerIn: parent
-        anchors.verticalCenterOffset: 6
+        anchors.verticalCenterOffset: 0
         width: root.layoutWidth - 2 * root.sidePadding
-        height: 70
+        height: 62
 
         Behavior on width {
           NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
@@ -1214,7 +1224,7 @@ if (!altTabBindProcess.running) altTabBindProcess.running = true
             // the slot's visual center — a single magnified icon stays
             // centered in the dock instead of drifting left.
             width: root.slotWidth * targetScale
-            height: 70
+            height: 62
             x: 0
             property bool animating: false
 

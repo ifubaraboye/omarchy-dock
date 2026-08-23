@@ -5,13 +5,13 @@ var DEFAULT_PINNED = []
 var lastWrittenHash = null
 
 var LAYOUT_OPTS = {
-    slotWidth: 58,
-    spacing: 8,
-    iconSize: 50,
-    hoverScale: 1.46,
-    radius: 104,
-    sidePadding: 18,
-    separatorWidth: 14
+    slotWidth: 60,
+    spacing: 6,
+    iconSize: 54,
+    hoverScale: 1.36,
+    radius: 96,
+    sidePadding: 12,
+    separatorWidth: 12
 }
 
 function normalizeId(value) {
