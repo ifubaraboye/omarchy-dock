@@ -265,11 +265,15 @@ function insertionIndexFor(cursorX, flow, opts) {
 function entryFor(id, entries) {
     var value = normalizeId(id)
     var list = entries || []
+    var lowerValue = value.toLowerCase()
     for (var i = 0; i < list.length; i++) {
         var entry = list[i] && list[i].entry ? list[i].entry : (list[i] || {})
-        if (normalizeId(entry.id || entry.desktopId) === value) return entry
+        var candidate = normalizeId(entry.id || entry.desktopId)
+        if (candidate === value || candidate.toLowerCase() === lowerValue) return entry
     }
-    return { id: value, name: value, icon: "application-x-executable" }
+    var pretty = value.split(".").pop().replace(/[-_]+/g, " ").trim()
+    if (pretty) pretty = pretty.charAt(0).toUpperCase() + pretty.slice(1)
+    return { id: value, name: pretty || value, icon: "application-x-executable" }
 }
 
 function buildDockItems(pinned, entries, runningIds) {

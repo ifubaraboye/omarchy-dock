@@ -1340,11 +1340,12 @@ Item {
       z: 20
       x: Math.max(12, Math.min(root.tooltipCenterX - width / 2, parent.width - width - 12))
       y: dockSurface.y - height - 8
-      width: tooltipText.implicitWidth + 24
-      height: 30
-      radius: 9
-      color: Util.alpha(Color.background, 0.96)
-      border.color: Util.alpha(Color.foreground, 0.15)
+      width: tooltipText.implicitWidth + 20
+      height: 24
+      radius: 8
+      color: Util.alpha(Color.background, 0.88)
+      border.color: Util.alpha(Color.foreground, 0.08)
+      border.width: 1
       Text {
         id: tooltipText
         anchors.centerIn: parent
@@ -1352,6 +1353,19 @@ Item {
         color: Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
+      }
+      // Subtle stem pointing toward the dock icon.
+      Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: parent.bottom
+        anchors.topMargin: -5
+        width: 8
+        height: 8
+        radius: 1
+        color: parent.color
+        border.color: parent.border.color
+        border.width: 1
+        rotation: 45
       }
     }
 
