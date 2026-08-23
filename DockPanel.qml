@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
+import qs.Commons
 
 Item {
   id: root
@@ -10,7 +11,7 @@ Item {
   DockPanelBase {
     id: dock
     dockHeight: 78
-    bottomMargin: 8
+    bottomMargin: 4
     iconSize: 54
     slotWidth: 60
     slotSpacing: 6
@@ -39,18 +40,11 @@ Item {
       anchors.bottomMargin: dock.bottomMargin
       width: dock.layoutWidth
       height: dock.dockHeight
-      radius: 20
+      radius: 18
       color: "transparent"
-      border.color: Util.alpha(Color.foreground, 0.08)
-      border.width: 1
+      border.color: "transparent"
+      border.width: 0
       opacity: dock.menuOpen || dock.pickerOpen || dock.dockHovered ? 1 : 0.92
-
-      Rectangle {
-        anchors { left: parent.left; right: parent.right; top: parent.top }
-        height: 1
-        radius: 1
-        color: Util.alpha(Color.foreground, 0.11)
-      }
 
       Behavior on opacity { NumberAnimation { duration: 160 } }
     }

@@ -8,7 +8,7 @@ var LAYOUT_OPTS = {
     slotWidth: 58,
     spacing: 8,
     iconSize: 50,
-    hoverScale: 1.46,
+    hoverScale: 1.36,
     radius: 104,
     sidePadding: 18,
     separatorWidth: 14
