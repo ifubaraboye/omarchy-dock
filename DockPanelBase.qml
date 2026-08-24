@@ -330,20 +330,27 @@ Item {
   }
 
   function handleClick(item) {
+    console.warn("macos.dock handleClick " + JSON.stringify(item))
     if (!item) return
     if (item.running) {
       try {
         // Never fall back to Toplevel.activate() here: it can warp the cursor.
         // Existing windows must be focused through Hyprland's IPC path.
         var hyprWindow = root.hyprlandWindowForItem(item)
+        console.warn("macos.dock handleClick running hyprWindow=" + (hyprWindow ? hyprWindow.address : "null"))
         if (!root.focusExistingWindow(hyprWindow))
           console.warn("macos.dock: could not resolve running window for " + item.id)
         return
       } catch (error) {}
     }
     var entry = DockModel.entryFor(item.id, root.appEntries)
-    if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
+    console.warn("macos.dock handleClick launch check shell=" + !!root.shell + " appLib=" + !!(root.shell && root.shell.appLibrary) + " hasLaunch=" + (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch) + " appEntriesLen=" + (root.appEntries ? root.appEntries.length : -1) + " entry=" + JSON.stringify(entry))
+    if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function") {
+      console.warn("macos.dock launching " + item.id + " with " + (entry.name || item.name))
       root.shell.appLibrary.launch(item.id, entry.name || item.name)
+    } else {
+      console.warn("macos.dock launch skipped - missing shell/appLibrary")
+    }
   }
 
   // ---- Alt+Tab app switcher -------------------------------------------------
@@ -1254,7 +1261,7 @@ Item {
 
             Behavior on x {
               enabled: wrapper.animating
-              SpringAnimation { spring: 4.5; damping: 3.6; mass: 1 }
+              SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
             }
 
             Component.onCompleted: {
@@ -1499,8 +1506,8 @@ Item {
       width: root.iconSize * root.ghostScale + 16
       height: root.iconSize * root.ghostScale + 16
       opacity: root.ghostOpacity
-      Behavior on x { SpringAnimation { spring: 4.5; damping: 3.6; mass: 1 } }
-      Behavior on y { SpringAnimation { spring: 4.5; damping: 3.6; mass: 1 } }
+      Behavior on x { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
+      Behavior on y { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
       Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
 
       Rectangle {

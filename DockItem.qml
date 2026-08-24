@@ -40,13 +40,13 @@ Item {
 
   Behavior on scale {
     enabled: root.animationEnabled
-    SpringAnimation { spring: 4.5; damping: 3.6; mass: 1 }
+    SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   scale: root.targetScale
 
   Behavior on y {
     enabled: root.animationEnabled
-    SpringAnimation { spring: 4.5; damping: 3.6; mass: 1 }
+    SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   y: -root.targetLift
 
