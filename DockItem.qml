@@ -40,13 +40,13 @@ Item {
 
   Behavior on scale {
     enabled: root.animationEnabled
-    SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 }
+    SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   scale: root.targetScale
 
   Behavior on y {
     enabled: root.animationEnabled
-    SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 }
+    SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   y: -root.targetLift
 
@@ -79,11 +79,11 @@ Item {
   Rectangle {
     anchors.horizontalCenter: parent.horizontalCenter
     anchors.top: icon.bottom
-    anchors.topMargin: 4
-    width: 5
-    height: 5
-    radius: 3
-    color: Qt.darker(Color.accent, 1.25)
+    anchors.topMargin: 2
+    width: 4
+    height: 4
+    radius: 2
+    color: Color.accent
     visible: !!root.itemData.running
   }
 
