@@ -9,3 +9,5 @@
 # Downloaded user icon cache should remain outside the repository.
 icons/
 dock-icons.json
+dock-settings.json
+dock-pinned-macos.json

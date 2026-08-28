@@ -6,6 +6,13 @@ const vm = require("node:vm")
 function loadQmlJs(path) {
   const source = fs.readFileSync(path, "utf8").replace(/^\.pragma library\s*/, "")
   const context = { module: { exports: {} }, console }
+  // Provide a minimal Qt mock so Qt.include works under Node.js.
+  context.Qt = {
+    include: (includePath) => {
+      const incSource = fs.readFileSync(includePath, "utf8").replace(/^\.pragma library\s*/, "")
+      vm.runInNewContext(incSource, context, { filename: includePath })
+    }
+  }
   vm.runInNewContext(source, context, { filename: path })
   return context.module.exports
 }
@@ -150,10 +157,10 @@ test("orderPinned keeps only pinned members in order", () => {
 test("computeLayout rests evenly with no cursor and grows with magnification", () => {
   const opts = model.LAYOUT_OPTS
   const rest = model.computeLayout([{ id: "a" }, { id: "b" }, { id: "c" }], -1, opts)
-  assert.equal(rest.totalWidth, 58 * 3 + 8 * 2 + 36)
+  assert.equal(rest.totalWidth, opts.slotWidth * 3 + opts.spacing * 2 + 2 * opts.sidePadding)
   assert.deepEqual({ ...rest.placements.a }, { x: 0, scale: 1, lift: 0, phantom: false })
-  assert.equal(rest.placements.b.x, 66)
-  assert.equal(rest.placements.c.x, 132)
+  assert.equal(rest.placements.b.x, opts.slotWidth + opts.spacing)
+  assert.equal(rest.placements.c.x, 2 * (opts.slotWidth + opts.spacing))
 
   const center = rest.placements.b.x + opts.slotWidth / 2
   const mag = model.computeLayout([{ id: "a" }, { id: "b" }, { id: "c" }], center, opts)
@@ -191,7 +198,7 @@ test("single magnified icon is centered in the dock", () => {
 test("multi-item flowWidth equals the content span", () => {
   const opts = model.LAYOUT_OPTS
   const rest = model.computeLayout([{ id: "a" }, { id: "b" }], -1, opts)
-  assert.equal(rest.flowWidth, 58 + 8 + 58)
+  assert.equal(rest.flowWidth, opts.slotWidth + opts.spacing + opts.slotWidth)
 })
 
 test("insertionIndexFor picks the nearest slot", () => {
@@ -201,4 +208,87 @@ test("insertionIndexFor picks the nearest slot", () => {
   assert.equal(model.insertionIndexFor(50, flow, opts), 1)
   assert.equal(model.insertionIndexFor(100, flow, opts), 1)
   assert.equal(model.insertionIndexFor(9999, flow, opts), 3)
+})
+
+test("settings parse and serialize autoHide", () => {
+  assert.equal(model.parseSettings('{"autoHide":true}', { autoHide: false }).autoHide, true)
+  assert.equal(model.parseSettings('{"autoHide":false}', { autoHide: true }).autoHide, false)
+  assert.equal(model.parseSettings('', { autoHide: true }).autoHide, true)
+  assert.equal(model.parseSettings('not json', { autoHide: false }).autoHide, false)
+  assert.equal(model.parseSettings('{}', { autoHide: true }).autoHide, true)
+  const s = model.serializeSettings({ autoHide: false })
+  const parsed = JSON.parse(s)
+  assert.equal(parsed.autoHide, false)
+  assert.equal(parsed.version, 1)
+  assert.equal(model.parseSettings(s, { autoHide: true }).autoHide, false)
+  assert.equal(model.serializeSettings({ autoHide: true }).includes('"autoHide": true'), true)
+})
+
+test("settings write guard ignores matching content", () => {
+  model.resetSettingsGuard()
+  model.markSettingsWritten('{"autoHide":true}\n')
+  assert.equal(model.shouldReprocessSettings('{"autoHide":true}\n'), false)
+  assert.equal(model.shouldReprocessSettings('{"autoHide":false}\n'), true)
+})
+
+test("auto-hide state machine: shouldHideDock and shouldScheduleHide require ready, engaged, suppressed", () => {
+  const base = { autoHide: true, enabled: true, dockReady: true, autoHidden: false, dockEngaged: false, hideSuppressed: false, dockHovered: false, edgeHovered: false }
+  assert.equal(model.shouldHideDock(base), true)
+  assert.equal(model.shouldScheduleHide(base), true)
+
+  // Disabled variants
+  assert.equal(model.shouldHideDock({ ...base, autoHide: false }), false)
+  assert.equal(model.shouldHideDock({ ...base, enabled: false }), false)
+  assert.equal(model.shouldHideDock({ ...base, dockReady: false }), false)
+  assert.equal(model.shouldHideDock({ ...base, autoHidden: true }), false)
+  assert.equal(model.shouldHideDock({ ...base, dockEngaged: true }), false)
+  assert.equal(model.shouldHideDock({ ...base, dockHovered: true }), false)
+  assert.equal(model.shouldHideDock({ ...base, edgeHovered: true }), false)
+  assert.equal(model.shouldHideDock({ ...base, hideSuppressed: true }), false)
+
+  assert.equal(model.shouldScheduleHide({ ...base, dockReady: false }), false)
+  assert.equal(model.shouldScheduleHide({ ...base, hideSuppressed: true }), false)
+  assert.equal(model.shouldScheduleHide({ ...base, dockEngaged: true }), false)
+})
+
+test("auto-hide shouldRevealDock only when hidden and edge hovered", () => {
+  const hiddenAtEdge = { autoHide: true, enabled: true, autoHidden: true, edgeHovered: true }
+  assert.equal(model.shouldRevealDock(hiddenAtEdge), true)
+  assert.equal(model.shouldRevealDock({ ...hiddenAtEdge, edgeHovered: false }), false)
+  assert.equal(model.shouldRevealDock({ ...hiddenAtEdge, autoHidden: false }), false)
+  assert.equal(model.shouldRevealDock({ ...hiddenAtEdge, autoHide: false }), false)
+  assert.equal(model.shouldRevealDock({ ...hiddenAtEdge, enabled: false }), false)
+})
+
+test("auto-hide matrix: menu/picker/preview/floating/altTab suppress hide", () => {
+  const idle = { autoHide: true, enabled: true, dockReady: true, autoHidden: false, dockEngaged: false, hideSuppressed: false }
+  assert.equal(model.shouldHideDock(idle), true)
+  assert.equal(model.shouldHideDock({ ...idle, hideSuppressed: true }), false)
+  // hideSuppressed covers menu/picker/preview/floating/altTab
+  assert.equal(model.shouldHideDock({ ...idle, dockEngaged: true }), false)
+  assert.equal(model.shouldRevealDock({ autoHide: true, enabled: true, autoHidden: true, edgeHovered: true }), true)
+  assert.equal(model.shouldRevealDock({ autoHide: true, enabled: true, autoHidden: true, edgeHovered: false }), false)
+})
+
+test("auto-hide hide→reveal→hide cycle is deterministic", () => {
+  // Start visible, idle → hide
+  let s = { autoHide: true, enabled: true, dockReady: true, autoHidden: false, dockEngaged: false, hideSuppressed: false, edgeHovered: false, dockHovered: false }
+  assert.equal(model.shouldHideDock(s), true)
+  s.autoHidden = true
+  // Hidden, edge not hovered → no reveal
+  assert.equal(model.shouldRevealDock(s), false)
+  // Edge hovered → reveal
+  s.edgeHovered = true
+  s.dockEngaged = true
+  assert.equal(model.shouldRevealDock(s), true)
+  s.autoHidden = false
+  s.edgeHovered = false
+  s.dockEngaged = false
+  // Back to idle → should hide again
+  assert.equal(model.shouldHideDock(s), true)
+  // Repeat without stuck state
+  s.autoHidden = true
+  s.edgeHovered = true
+  s.dockEngaged = true
+  assert.equal(model.shouldRevealDock(s), true)
 })
