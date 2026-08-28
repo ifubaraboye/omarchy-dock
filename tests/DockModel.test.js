@@ -230,3 +230,65 @@ test("settings write guard ignores matching content", () => {
   assert.equal(model.shouldReprocessSettings('{"autoHide":true}\n'), false)
   assert.equal(model.shouldReprocessSettings('{"autoHide":false}\n'), true)
 })
+
+test("auto-hide state machine: shouldHideDock and shouldScheduleHide require ready, engaged, suppressed", () => {
+  const base = { autoHide: true, enabled: true, dockReady: true, autoHidden: false, dockEngaged: false, hideSuppressed: false, dockHovered: false, edgeHovered: false }
+  assert.equal(model.shouldHideDock(base), true)
+  assert.equal(model.shouldScheduleHide(base), true)
+
+  // Disabled variants
+  assert.equal(model.shouldHideDock({ ...base, autoHide: false }), false)
+  assert.equal(model.shouldHideDock({ ...base, enabled: false }), false)
+  assert.equal(model.shouldHideDock({ ...base, dockReady: false }), false)
+  assert.equal(model.shouldHideDock({ ...base, autoHidden: true }), false)
+  assert.equal(model.shouldHideDock({ ...base, dockEngaged: true }), false)
+  assert.equal(model.shouldHideDock({ ...base, dockHovered: true }), false)
+  assert.equal(model.shouldHideDock({ ...base, edgeHovered: true }), false)
+  assert.equal(model.shouldHideDock({ ...base, hideSuppressed: true }), false)
+
+  assert.equal(model.shouldScheduleHide({ ...base, dockReady: false }), false)
+  assert.equal(model.shouldScheduleHide({ ...base, hideSuppressed: true }), false)
+  assert.equal(model.shouldScheduleHide({ ...base, dockEngaged: true }), false)
+})
+
+test("auto-hide shouldRevealDock only when hidden and edge hovered", () => {
+  const hiddenAtEdge = { autoHide: true, enabled: true, autoHidden: true, edgeHovered: true }
+  assert.equal(model.shouldRevealDock(hiddenAtEdge), true)
+  assert.equal(model.shouldRevealDock({ ...hiddenAtEdge, edgeHovered: false }), false)
+  assert.equal(model.shouldRevealDock({ ...hiddenAtEdge, autoHidden: false }), false)
+  assert.equal(model.shouldRevealDock({ ...hiddenAtEdge, autoHide: false }), false)
+  assert.equal(model.shouldRevealDock({ ...hiddenAtEdge, enabled: false }), false)
+})
+
+test("auto-hide matrix: menu/picker/preview/floating/altTab suppress hide", () => {
+  const idle = { autoHide: true, enabled: true, dockReady: true, autoHidden: false, dockEngaged: false, hideSuppressed: false }
+  assert.equal(model.shouldHideDock(idle), true)
+  assert.equal(model.shouldHideDock({ ...idle, hideSuppressed: true }), false)
+  // hideSuppressed covers menu/picker/preview/floating/altTab
+  assert.equal(model.shouldHideDock({ ...idle, dockEngaged: true }), false)
+  assert.equal(model.shouldRevealDock({ autoHide: true, enabled: true, autoHidden: true, edgeHovered: true }), true)
+  assert.equal(model.shouldRevealDock({ autoHide: true, enabled: true, autoHidden: true, edgeHovered: false }), false)
+})
+
+test("auto-hide hide→reveal→hide cycle is deterministic", () => {
+  // Start visible, idle → hide
+  let s = { autoHide: true, enabled: true, dockReady: true, autoHidden: false, dockEngaged: false, hideSuppressed: false, edgeHovered: false, dockHovered: false }
+  assert.equal(model.shouldHideDock(s), true)
+  s.autoHidden = true
+  // Hidden, edge not hovered → no reveal
+  assert.equal(model.shouldRevealDock(s), false)
+  // Edge hovered → reveal
+  s.edgeHovered = true
+  s.dockEngaged = true
+  assert.equal(model.shouldRevealDock(s), true)
+  s.autoHidden = false
+  s.edgeHovered = false
+  s.dockEngaged = false
+  // Back to idle → should hide again
+  assert.equal(model.shouldHideDock(s), true)
+  // Repeat without stuck state
+  s.autoHidden = true
+  s.edgeHovered = true
+  s.dockEngaged = true
+  assert.equal(model.shouldRevealDock(s), true)
+})

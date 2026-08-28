@@ -19,7 +19,12 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - "Manage Icons…" lets you assign icons to *any* installed app, even before it
   first appears on the dock
 - macOS-style Alt+Tab application switcher (most-recently-used order)
-- Tiling window adaptation: while the dock is shown, it reserves its footprint
+- Auto-hide by default: the dock glides down after 1s idle and reveals
+  when the cursor hits the bottom edge (100ms delay, 380ms hide / 280ms
+  reveal, 3px peek). Tiled windows use the full screen — the dock
+  overlays them like macOS. Toggle via dock menu or IPC, persists in
+  `~/.config/omarchy/dock-settings.json`
+- Tiling window adaptation: when auto-hide is off, it reserves its footprint
   as a Wayland exclusive zone, so tiled windows never overlap it
 
 ## Install
@@ -31,10 +36,11 @@ omarchy plugin add https://github.com/ifubaraboye/omarchy-dock.git
 omarchy plugin enable ifubaraboye.dock
 ```
 
-The dock stores pins in:
+The dock stores pins and auto-hide preference in:
 
 ```text
 ~/.config/omarchy/dock-pinned-macos.json
+~/.config/omarchy/dock-settings.json
 ```
 
 ## Requirements and removal
@@ -116,6 +122,26 @@ omarchy-shell macos.dock hide
 omarchy-shell macos.dock show
 omarchy-shell macos.dock toggle
 ```
+
+Auto-hide is **enabled by default** (fresh installs and existing installs without
+`dock-settings.json` both default to ON). The dock waits **1000ms** of idle
+before gliding down **380ms** to a **3px** peek; hitting the bottom **3px** edge
+reveals it after **100ms** with a **280ms** glide up. It stays visible while
+the cursor is over the dock *or* the bottom edge (`dockEngaged`), and hide is
+suppressed while a menu, icon picker, window preview, drag, or Alt+Tab HUD is
+active. Auto-hide can be toggled without restarting the shell:
+
+```bash
+# Right-click any dock icon → Turn Hiding Off / On
+omarchy-shell -q macos.dock toggleAutoHide
+omarchy-shell -q macos.dock setAutoHide true
+omarchy-shell -q macos.dock setAutoHide false
+omarchy-shell -q macos.dock getAutoHide
+```
+
+The preference is persisted in `~/.config/omarchy/dock-settings.json` and survives
+restarts. When auto-hide is on, tiled windows use the full screen and the dock
+overlays them; when off, the dock reserves its footprint as an exclusive zone.
 
 ## Alt+Tab application switcher
 

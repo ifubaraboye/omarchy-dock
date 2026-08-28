@@ -27,13 +27,14 @@ PanelWindow {
     x: Math.max(12, Math.min(root.requestedPosition.x, root.width - width - 12))
     y: Math.max(12, Math.min(root.requestedPosition.y, root.height - height - 12))
     width: 180
-    height: 6 * 38 + 3 * 10 + 16
+    height: menuColumn.implicitHeight + 16
     radius: 14
     color: Util.alpha(Color.background, 0.92)
     border.color: Util.alpha(Color.foreground, 0.08)
     border.width: 1
 
     Column {
+      id: menuColumn
       anchors.fill: parent
       anchors.margins: 8
       spacing: 2

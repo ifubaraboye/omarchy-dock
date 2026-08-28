@@ -351,6 +351,24 @@ function markSettingsWritten(content) { lastSettingsHash = hashContent(content) 
 
 function resetSettingsGuard() { lastSettingsHash = null }
 
+// ---- Auto-hide state machine (pure, testable) --------------------------
+function shouldHideDock(state) {
+    var s = state || {}
+    var dockEngaged = !!(s.dockEngaged || s.dockHovered || s.edgeHovered)
+    return !!(s.autoHide && s.enabled && s.dockReady && !s.autoHidden && !dockEngaged && !s.hideSuppressed)
+}
+
+function shouldScheduleHide(state) {
+    var s = state || {}
+    var dockEngaged = !!(s.dockEngaged || s.dockHovered || s.edgeHovered)
+    return !!(s.autoHide && s.enabled && s.dockReady && !s.autoHidden && !dockEngaged && !s.hideSuppressed)
+}
+
+function shouldRevealDock(state) {
+    var s = state || {}
+    return !!(s.autoHide && s.enabled && s.autoHidden && !!s.edgeHovered)
+}
+
 // Allows the same pure module to be exercised by Node tests. QML does not
 // define `module`, so this branch is inert when imported by Quickshell.
 if (typeof module !== "undefined" && module.exports) {
@@ -385,6 +403,9 @@ if (typeof module !== "undefined" && module.exports) {
         serializeSettings: serializeSettings,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
-        resetSettingsGuard: resetSettingsGuard
+        resetSettingsGuard: resetSettingsGuard,
+        shouldHideDock: shouldHideDock,
+        shouldScheduleHide: shouldScheduleHide,
+        shouldRevealDock: shouldRevealDock
     }
 }

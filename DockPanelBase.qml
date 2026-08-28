@@ -60,6 +60,10 @@ Item {
   // vanish under a menu, preview, picker or drag.
   property bool hideSuppressed: root.menuOpen || root.pickerOpen || root.previewVisible || root.floatingId !== "" || !!(root.altTab && root.altTab.active)
   property bool edgeHovered: false
+  // Combined engagement — dockHovered OR edgeHovered. While true, hide is
+  // suppressed and must not be scheduled. Extracted to avoid the fragile 5px
+  // gap between dockSurface bottom (H-8) and edge strip (H-3).
+  property bool dockEngaged: root.dockHovered || root.edgeHovered
   // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
   // this flag drives the bottomMargin translation so the glide is animated.
   property bool autoHidden: false
@@ -136,24 +140,39 @@ Item {
     Qt.callLater(function() { settingsRenameProcess.running = true })
   }
 
+  // Central helper: build the state snapshot consumed by the pure helpers.
+  function hideState() {
+    return {
+      autoHide: root.autoHide,
+      enabled: root.enabled,
+      dockReady: root.dockReady,
+      autoHidden: root.autoHidden,
+      dockEngaged: root.dockEngaged,
+      hideSuppressed: root.hideSuppressed,
+      dockHovered: root.dockHovered,
+      edgeHovered: root.edgeHovered
+    }
+  }
+
+  function maybeScheduleHide() {
+    if (DockModel.shouldScheduleHide(hideState())) hideTimer.restart()
+  }
+
   onAutoHideChanged: {
     if (!root.autoHide) {
       hideTimer.stop()
       showTimer.stop()
       root.autoHidden = false
     } else {
-      // When turning auto-hide on, arm the hide timer if the cursor is not
-      // over the dock so it glides away after the delay.
-      if (!root.dockHovered && !root.hideSuppressed && root.dockReady && root.enabled)
-        hideTimer.restart()
+      maybeScheduleHide()
     }
   }
 
   onHideSuppressedChanged: {
     if (root.hideSuppressed) {
       hideTimer.stop()
-    } else if (root.autoHide && root.enabled && root.dockReady && !root.dockHovered && !root.edgeHovered && !root.autoHidden) {
-      hideTimer.restart()
+    } else {
+      maybeScheduleHide()
     }
   }
 
@@ -163,14 +182,13 @@ Item {
       // Manual hide (Super+H) always stops auto-hide timers.
       hideTimer.stop()
       showTimer.stop()
-    } else if (root.autoHide && root.dockReady && !root.dockHovered && !root.edgeHovered && !root.hideSuppressed) {
-      hideTimer.restart()
+    } else {
+      maybeScheduleHide()
     }
   }
 
   onDockReadyChanged: {
-    if (root.dockReady && root.autoHide && root.enabled && !root.dockHovered && !root.edgeHovered && !root.hideSuppressed)
-      hideTimer.restart()
+    maybeScheduleHide()
   }
 
   onDockHoveredChanged: {
@@ -178,21 +196,27 @@ Item {
       hideTimer.stop()
       showTimer.stop()
       if (root.autoHide && root.autoHidden) root.autoHidden = false
-    } else if (root.autoHide && root.enabled && root.dockReady && !root.edgeHovered && !root.hideSuppressed) {
-      hideTimer.restart()
+    } else {
+      maybeScheduleHide()
     }
+  }
+
+  onDockEngagedChanged: {
+    // The fragile 5px gap between dock bottom and edge is now covered by
+    // dockEngaged. A single handler here would suffice, but we keep the
+    // explicit dock/edge handlers for the reveal path.
+    if (!root.dockEngaged) maybeScheduleHide()
+    else hideTimer.stop()
   }
 
   onEdgeHoveredChanged: {
     if (root.edgeHovered) {
       hideTimer.stop()
-      if (root.autoHide && root.autoHidden) showTimer.restart()
-      else if (root.autoHide && !root.autoHidden) hideTimer.stop()
+      if (DockModel.shouldRevealDock(hideState())) showTimer.restart()
     } else {
       showTimer.stop()
-      if (root.autoHide && root.enabled && root.dockReady && !root.dockHovered && !root.hideSuppressed && !root.autoHidden) {
-        hideTimer.restart()
-      } else if (root.autoHide && root.autoHidden) {
+      maybeScheduleHide()
+      if (root.autoHide && root.autoHidden) {
         // Edge left while still hidden — cancel pending show, stay hidden.
         showTimer.stop()
       }
@@ -1466,7 +1490,7 @@ Item {
         onExited: {
           root.dockHovered = false
           root.clearHover()
-          if (root.autoHide && root.dockReady && root.enabled && !root.hideSuppressed && !root.edgeHovered) hideTimer.restart()
+          maybeScheduleHide()
         }
         onPositionChanged: {
           root.hoveredMouseX = mouseArea.mapToItem(null, mouseX, mouseY).x
@@ -1529,8 +1553,7 @@ Item {
         if (mouseArea.containsMouse) return
         root.dockHovered = false
         root.clearHover()
-        if (root.autoHide && root.dockReady && root.enabled && !root.hideSuppressed && !root.edgeHovered) hideTimer.restart()
-        else hideTimer.stop()
+        maybeScheduleHide()
       }
     }
   }
@@ -1539,8 +1562,7 @@ Item {
     id: hideTimer
     interval: root.hideDelay
     onTriggered: {
-      if (!root.autoHide || !root.enabled || root.hideSuppressed || root.dockHovered || root.edgeHovered) return
-      if (root.autoHidden) return
+      if (!DockModel.shouldHideDock(hideState())) return
       root.autoHidden = true
     }
   }
@@ -1549,8 +1571,7 @@ Item {
     id: showTimer
     interval: root.showDelay
     onTriggered: {
-      if (!root.autoHide || !root.enabled || !root.autoHidden) return
-      if (!root.edgeHovered) return
+      if (!DockModel.shouldRevealDock(hideState())) return
       root.autoHidden = false
       hideTimer.stop()
     }
