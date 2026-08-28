@@ -55,7 +55,7 @@ Item {
   property int hideDuration: 380
   property int showDuration: 280
   property int edgeHeight: 3
-  property int peekPx: 3
+  property int peekPx: 0
   // Hide is suppressed while any transient UI is active so the dock does not
   // vanish under a menu, preview, picker or drag.
   property bool hideSuppressed: root.menuOpen || root.pickerOpen || root.previewVisible || root.floatingId !== "" || !!(root.altTab && root.altTab.active)
@@ -1358,19 +1358,10 @@ Item {
       border.width: 1
       opacity: !root.enabled ? 0 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
 
-      // Glass highlight — subtle top edge that makes the tinted surface read as glass. Inset
-      // by the dock's radius so it never sticks out beyond the rounded corners
-      // (previously the 1px bar at y=0 spanned 0→width and showed ~14px stubs
-      // on each side where the r=18 corner cuts in). Inside dockSurface so it
-      // follows the same clipping without needing clip:true (which would clip
-      // the magnified icons).
-      Rectangle {
-        anchors { left: parent.left; right: parent.right; top: parent.top
-                  leftMargin: 18; rightMargin: 18 }
-        height: 1
-        radius: 1
-        color: Util.alpha(Color.foreground, 0.10)
-      }
+      // Top edge now matches the other three sides via the 1px border
+      // (0.04) alone — no extra highlight, so the dock reads as a uniform
+      // glass pill instead of a brighter top. Removed the previous 0.10 bar
+      // that made the top brighter than left/right/bottom.
 
       Behavior on width {
         NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
