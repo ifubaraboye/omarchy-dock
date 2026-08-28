@@ -59,6 +59,7 @@ Item {
   // Hide is suppressed while any transient UI is active so the dock does not
   // vanish under a menu, preview, picker or drag.
   property bool hideSuppressed: root.menuOpen || root.pickerOpen || root.previewVisible || root.floatingId !== "" || root.altTab.active
+  property bool edgeHovered: false
   // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
   // this flag drives the bottomMargin translation so the glide is animated.
   property bool autoHidden: false
@@ -151,7 +152,7 @@ Item {
   onHideSuppressedChanged: {
     if (root.hideSuppressed) {
       hideTimer.stop()
-    } else if (root.autoHide && root.enabled && root.dockReady && !root.dockHovered && !root.autoHidden) {
+    } else if (root.autoHide && root.enabled && root.dockReady && !root.dockHovered && !root.edgeHovered && !root.autoHidden) {
       hideTimer.restart()
     }
   }
@@ -162,13 +163,13 @@ Item {
       // Manual hide (Super+H) always stops auto-hide timers.
       hideTimer.stop()
       showTimer.stop()
-    } else if (root.autoHide && root.dockReady && !root.dockHovered && !root.hideSuppressed) {
+    } else if (root.autoHide && root.dockReady && !root.dockHovered && !root.edgeHovered && !root.hideSuppressed) {
       hideTimer.restart()
     }
   }
 
   onDockReadyChanged: {
-    if (root.dockReady && root.autoHide && root.enabled && !root.dockHovered && !root.hideSuppressed)
+    if (root.dockReady && root.autoHide && root.enabled && !root.dockHovered && !root.edgeHovered && !root.hideSuppressed)
       hideTimer.restart()
   }
 
@@ -177,8 +178,24 @@ Item {
       hideTimer.stop()
       showTimer.stop()
       if (root.autoHide && root.autoHidden) root.autoHidden = false
-    } else if (root.autoHide && root.enabled && root.dockReady && !root.hideSuppressed) {
+    } else if (root.autoHide && root.enabled && root.dockReady && !root.edgeHovered && !root.hideSuppressed) {
       hideTimer.restart()
+    }
+  }
+
+  onEdgeHoveredChanged: {
+    if (root.edgeHovered) {
+      hideTimer.stop()
+      if (root.autoHide && root.autoHidden) showTimer.restart()
+      else if (root.autoHide && !root.autoHidden) hideTimer.stop()
+    } else {
+      showTimer.stop()
+      if (root.autoHide && root.enabled && root.dockReady && !root.dockHovered && !root.hideSuppressed && !root.autoHidden) {
+        hideTimer.restart()
+      } else if (root.autoHide && root.autoHidden) {
+        // Edge left while still hidden — cancel pending show, stay hidden.
+        showTimer.stop()
+      }
     }
   }
 
@@ -1449,7 +1466,7 @@ Item {
         onExited: {
           root.dockHovered = false
           root.clearHover()
-          if (root.autoHide && root.dockReady && root.enabled && !root.hideSuppressed) hideTimer.restart()
+          if (root.autoHide && root.dockReady && root.enabled && !root.hideSuppressed && !root.edgeHovered) hideTimer.restart()
         }
         onPositionChanged: {
           root.hoveredMouseX = mouseArea.mapToItem(null, mouseX, mouseY).x
@@ -1506,9 +1523,13 @@ Item {
         if (root.autoHide && root.autoHidden) root.autoHidden = false
       }
       onExited: {
+        // Leaving the bottom strip upward into the dock body still keeps the
+        // cursor over the main mouseArea. Do not clear hover/hide in that
+        // case — the parent area's onExited will handle the true exit.
+        if (mouseArea.containsMouse) return
         root.dockHovered = false
         root.clearHover()
-        if (root.autoHide && root.dockReady && root.enabled && !root.hideSuppressed) hideTimer.restart()
+        if (root.autoHide && root.dockReady && root.enabled && !root.hideSuppressed && !root.edgeHovered) hideTimer.restart()
         else hideTimer.stop()
       }
     }
@@ -1518,7 +1539,7 @@ Item {
     id: hideTimer
     interval: root.hideDelay
     onTriggered: {
-      if (!root.autoHide || !root.enabled || root.hideSuppressed || root.dockHovered) return
+      if (!root.autoHide || !root.enabled || root.hideSuppressed || root.dockHovered || root.edgeHovered) return
       if (root.autoHidden) return
       root.autoHidden = true
     }
@@ -1529,14 +1550,12 @@ Item {
     interval: root.showDelay
     onTriggered: {
       if (!root.autoHide || !root.enabled || !root.autoHidden) return
+      if (!root.edgeHovered) return
       root.autoHidden = false
       hideTimer.stop()
-      // If the cursor brushed the edge but never entered the dock, the dock
-      // would stay up forever with no exit event to arm hide. Arm it now;
-      // the dock's MouseArea onEntered will immediately cancel it if the
-      // cursor is actually over the dock.
-      if (!root.dockHovered && !root.hideSuppressed && root.dockReady)
-        hideTimer.restart()
+      // If the cursor is still at the edge, keep the dock up; hide will be
+      // armed when both edge and dock are left. If edge was just brushed,
+      // the subsequent edge exit will arm hide.
     }
   }
 
@@ -1633,12 +1652,14 @@ Item {
   }
 
   // Edge hot-zone: a 3px invisible strip at the screen bottom that reveals
-  // the dock even when it is fully slid off-screen. Using its own PanelWindow
-  // keeps hit-testing alive while dockWindow's mask is off-screen. The timer
-  // adds a subtle 100ms debounce so accidental brushes don't pop the dock.
+  // the dock even when it is fully slid off-screen and keeps it visible while
+  // the cursor lingers at the edge. Using its own PanelWindow keeps
+  // hit-testing alive while dockWindow's mask is off-screen or gapped (8px).
+  // The timer adds a subtle 100ms debounce so accidental brushes don't pop
+  // the dock, and edgeHovered participates in hide suppression like dockHovered.
   PanelWindow {
     id: edgeHotZone
-    visible: !root.conflictDetected && root.enabled && root.autoHide && root.autoHidden && root.dockReady
+    visible: !root.conflictDetected && root.enabled && root.autoHide && root.dockReady
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
@@ -1655,11 +1676,16 @@ Item {
         anchors.fill: parent
         hoverEnabled: true
         onEntered: {
-          if (!root.autoHide || !root.autoHidden) return
-          showTimer.restart()
+          root.edgeHovered = true
+          if (!root.autoHide) return
+          if (root.autoHidden) showTimer.restart()
+          else hideTimer.stop()
         }
         onExited: {
+          root.edgeHovered = false
           showTimer.stop()
+          // Leaving the edge while dock is still hidden cancels pending show.
+          // Leaving while visible will arm hide via onEdgeHoveredChanged.
         }
       }
     }
