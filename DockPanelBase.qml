@@ -58,7 +58,7 @@ Item {
   property int peekPx: 3
   // Hide is suppressed while any transient UI is active so the dock does not
   // vanish under a menu, preview, picker or drag.
-  property bool hideSuppressed: root.menuOpen || root.pickerOpen || root.previewVisible || root.floatingId !== "" || root.altTab.active
+  property bool hideSuppressed: root.menuOpen || root.pickerOpen || root.previewVisible || root.floatingId !== "" || !!(root.altTab && root.altTab.active)
   property bool edgeHovered: false
   // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
   // this flag drives the bottomMargin translation so the glide is animated.
@@ -118,13 +118,13 @@ Item {
     function altTabNext() { root.altTabNext() }
     function altTabPrev() { root.altTabPrev() }
     function altTabCancel() { root.altTabCancel() }
-    function toggleAutoHide() { root.autoHide = !root.autoHide; root.saveSettings() }
-    function setAutoHide(value) {
+    function toggleAutoHide(): void { root.autoHide = !root.autoHide; root.saveSettings() }
+    function setAutoHide(value: string): void {
       var v = String(value).toLowerCase()
       root.autoHide = (v === "true" || v === "1" || v === "on")
       root.saveSettings()
     }
-    function getAutoHide() { return root.autoHide }
+    function getAutoHide(): bool { return root.autoHide }
   }
 
   function saveSettings() {
@@ -1553,9 +1553,6 @@ Item {
       if (!root.edgeHovered) return
       root.autoHidden = false
       hideTimer.stop()
-      // If the cursor is still at the edge, keep the dock up; hide will be
-      // armed when both edge and dock are left. If edge was just brushed,
-      // the subsequent edge exit will arm hide.
     }
   }
 
