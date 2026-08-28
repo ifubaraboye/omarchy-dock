@@ -6,6 +6,13 @@ const vm = require("node:vm")
 function loadQmlJs(path) {
   const source = fs.readFileSync(path, "utf8").replace(/^\.pragma library\s*/, "")
   const context = { module: { exports: {} }, console }
+  // Provide a minimal Qt mock so Qt.include works under Node.js.
+  context.Qt = {
+    include: (includePath) => {
+      const incSource = fs.readFileSync(includePath, "utf8").replace(/^\.pragma library\s*/, "")
+      vm.runInNewContext(incSource, context, { filename: includePath })
+    }
+  }
   vm.runInNewContext(source, context, { filename: path })
   return context.module.exports
 }
@@ -150,10 +157,10 @@ test("orderPinned keeps only pinned members in order", () => {
 test("computeLayout rests evenly with no cursor and grows with magnification", () => {
   const opts = model.LAYOUT_OPTS
   const rest = model.computeLayout([{ id: "a" }, { id: "b" }, { id: "c" }], -1, opts)
-  assert.equal(rest.totalWidth, 58 * 3 + 8 * 2 + 36)
+  assert.equal(rest.totalWidth, opts.slotWidth * 3 + opts.spacing * 2 + 2 * opts.sidePadding)
   assert.deepEqual({ ...rest.placements.a }, { x: 0, scale: 1, lift: 0, phantom: false })
-  assert.equal(rest.placements.b.x, 66)
-  assert.equal(rest.placements.c.x, 132)
+  assert.equal(rest.placements.b.x, opts.slotWidth + opts.spacing)
+  assert.equal(rest.placements.c.x, 2 * (opts.slotWidth + opts.spacing))
 
   const center = rest.placements.b.x + opts.slotWidth / 2
   const mag = model.computeLayout([{ id: "a" }, { id: "b" }, { id: "c" }], center, opts)
@@ -191,7 +198,7 @@ test("single magnified icon is centered in the dock", () => {
 test("multi-item flowWidth equals the content span", () => {
   const opts = model.LAYOUT_OPTS
   const rest = model.computeLayout([{ id: "a" }, { id: "b" }], -1, opts)
-  assert.equal(rest.flowWidth, 58 + 8 + 58)
+  assert.equal(rest.flowWidth, opts.slotWidth + opts.spacing + opts.slotWidth)
 })
 
 test("insertionIndexFor picks the nearest slot", () => {
@@ -201,4 +208,25 @@ test("insertionIndexFor picks the nearest slot", () => {
   assert.equal(model.insertionIndexFor(50, flow, opts), 1)
   assert.equal(model.insertionIndexFor(100, flow, opts), 1)
   assert.equal(model.insertionIndexFor(9999, flow, opts), 3)
+})
+
+test("settings parse and serialize autoHide", () => {
+  assert.equal(model.parseSettings('{"autoHide":true}', { autoHide: false }).autoHide, true)
+  assert.equal(model.parseSettings('{"autoHide":false}', { autoHide: true }).autoHide, false)
+  assert.equal(model.parseSettings('', { autoHide: true }).autoHide, true)
+  assert.equal(model.parseSettings('not json', { autoHide: false }).autoHide, false)
+  assert.equal(model.parseSettings('{}', { autoHide: true }).autoHide, true)
+  const s = model.serializeSettings({ autoHide: false })
+  const parsed = JSON.parse(s)
+  assert.equal(parsed.autoHide, false)
+  assert.equal(parsed.version, 1)
+  assert.equal(model.parseSettings(s, { autoHide: true }).autoHide, false)
+  assert.equal(model.serializeSettings({ autoHide: true }).includes('"autoHide": true'), true)
+})
+
+test("settings write guard ignores matching content", () => {
+  model.resetSettingsGuard()
+  model.markSettingsWritten('{"autoHide":true}\n')
+  assert.equal(model.shouldReprocessSettings('{"autoHide":true}\n'), false)
+  assert.equal(model.shouldReprocessSettings('{"autoHide":false}\n'), true)
 })

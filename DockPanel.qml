@@ -46,7 +46,7 @@ Item {
     Rectangle {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
-      anchors.bottomMargin: dock.bottomMargin
+      anchors.bottomMargin: dock.autoHide && dock.autoHidden ? -dock.dockHeight + dock.peekPx : dock.bottomMargin
       width: dock.layoutWidth
       height: dock.dockHeight
       radius: 18
@@ -55,6 +55,7 @@ Item {
       border.width: 0
       opacity: dock.menuOpen || dock.pickerOpen || dock.dockHovered ? 1 : 0.92
 
+      Behavior on anchors.bottomMargin { NumberAnimation { duration: dock.autoHidden ? dock.hideDuration : dock.showDuration; easing.type: Easing.OutCubic } }
       Behavior on opacity { NumberAnimation { duration: 160 } }
     }
   }

@@ -316,6 +316,41 @@ function markWritten(content) { lastWrittenHash = hashContent(content) }
 
 function resetWrittenGuard() { lastWrittenHash = null }
 
+// ---- Dock settings (auto-hide etc.) ------------------------------------
+var lastSettingsHash = null
+
+function parseSettings(text, fallback) {
+    var defaults = fallback || { autoHide: true }
+    var source = String(text || "").trim()
+    if (!source) return { autoHide: !!defaults.autoHide }
+    try {
+        var parsed = JSON.parse(source)
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+            return { autoHide: !!defaults.autoHide }
+        if (typeof parsed.autoHide === "boolean")
+            return { autoHide: parsed.autoHide }
+        // Legacy: tolerate string "true"/"false"
+        if (typeof parsed.autoHide === "string")
+            return { autoHide: parsed.autoHide === "true" }
+        return { autoHide: !!defaults.autoHide }
+    } catch (error) {
+        return { autoHide: !!defaults.autoHide }
+    }
+}
+
+function serializeSettings(settings) {
+    var value = settings && typeof settings.autoHide === "boolean" ? settings.autoHide : true
+    return JSON.stringify({ version: 1, autoHide: value }, null, 2) + "\n"
+}
+
+function shouldReprocessSettings(content) {
+    return hashContent(content) !== lastSettingsHash
+}
+
+function markSettingsWritten(content) { lastSettingsHash = hashContent(content) }
+
+function resetSettingsGuard() { lastSettingsHash = null }
+
 // Allows the same pure module to be exercised by Node tests. QML does not
 // define `module`, so this branch is inert when imported by Quickshell.
 if (typeof module !== "undefined" && module.exports) {
@@ -345,6 +380,11 @@ if (typeof module !== "undefined" && module.exports) {
         hashContent: hashContent,
         shouldReprocess: shouldReprocess,
         markWritten: markWritten,
-        resetWrittenGuard: resetWrittenGuard
+        resetWrittenGuard: resetWrittenGuard,
+        parseSettings: parseSettings,
+        serializeSettings: serializeSettings,
+        shouldReprocessSettings: shouldReprocessSettings,
+        markSettingsWritten: markSettingsWritten,
+        resetSettingsGuard: resetSettingsGuard
     }
 }

@@ -18,6 +18,8 @@ Item {
   property string iconMapPath: home + "/.config/omarchy/dock-icons.json"
   property string pinPath: home + "/.config/omarchy/dock-pinned-macos.json"
   property string tempPinPath: pinPath + ".tmp"
+  property string settingsPath: home + "/.config/omarchy/dock-settings.json"
+  property string tempSettingsPath: settingsPath + ".tmp"
   property var pinnedIds: []
   property var dockOrder: []
   property bool pinFileLoaded: false
@@ -26,6 +28,8 @@ Item {
   // reload() path re-reads fresh, and this window skips watcher events that
   // belong to our own save cycles entirely.
   property double ownWriteUntil: 0
+  property bool settingsLoaded: false
+  property double settingsWriteUntil: 0
   property var appEntries: []
   property var runningIds: []
   // Most-recently-used app ids, front = most recent. Maintained from focus
@@ -42,11 +46,22 @@ Item {
   property bool menuOpen: false
   property bool pickerOpen: false
   property bool enabled: true
-  onEnabledChanged: if (!root.enabled) root.hidePreview()
   property bool dockReady: false
-  // Keep the prototype visible while validating layout and interaction. The
-  // slide-away behavior remains available for a later settings toggle.
-  property bool autoHide: false
+  // macOS-style auto-hide. Enabled by default; persisted in dock-settings.json.
+  property bool autoHide: true
+  // Tuning for the macOS glide — not too fast, not sluggish.
+  property int hideDelay: 1000
+  property int showDelay: 100
+  property int hideDuration: 380
+  property int showDuration: 280
+  property int edgeHeight: 3
+  property int peekPx: 3
+  // Hide is suppressed while any transient UI is active so the dock does not
+  // vanish under a menu, preview, picker or drag.
+  property bool hideSuppressed: root.menuOpen || root.pickerOpen || root.previewVisible || root.floatingId !== "" || root.altTab.active
+  // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
+  // this flag drives the bottomMargin translation so the glide is animated.
+  property bool autoHidden: false
   property int dockHeight: 101
   property int bottomMargin: 8
   property int iconSize: 50
@@ -102,6 +117,69 @@ Item {
     function altTabNext() { root.altTabNext() }
     function altTabPrev() { root.altTabPrev() }
     function altTabCancel() { root.altTabCancel() }
+    function toggleAutoHide() { root.autoHide = !root.autoHide; root.saveSettings() }
+    function setAutoHide(value) {
+      var v = String(value).toLowerCase()
+      root.autoHide = (v === "true" || v === "1" || v === "on")
+      root.saveSettings()
+    }
+    function getAutoHide() { return root.autoHide }
+  }
+
+  function saveSettings() {
+    var content = DockModel.serializeSettings({ autoHide: root.autoHide })
+    root.settingsWriteUntil = Date.now() + 2000
+    DockModel.markSettingsWritten(content)
+    settingsWriter.path = root.tempSettingsPath
+    settingsWriter.setText(content)
+    Qt.callLater(function() { settingsRenameProcess.running = true })
+  }
+
+  onAutoHideChanged: {
+    if (!root.autoHide) {
+      hideTimer.stop()
+      showTimer.stop()
+      root.autoHidden = false
+    } else {
+      // When turning auto-hide on, arm the hide timer if the cursor is not
+      // over the dock so it glides away after the delay.
+      if (!root.dockHovered && !root.hideSuppressed && root.dockReady && root.enabled)
+        hideTimer.restart()
+    }
+  }
+
+  onHideSuppressedChanged: {
+    if (root.hideSuppressed) {
+      hideTimer.stop()
+    } else if (root.autoHide && root.enabled && root.dockReady && !root.dockHovered && !root.autoHidden) {
+      hideTimer.restart()
+    }
+  }
+
+  onEnabledChanged: {
+    if (!root.enabled) root.hidePreview()
+    if (!root.enabled) {
+      // Manual hide (Super+H) always stops auto-hide timers.
+      hideTimer.stop()
+      showTimer.stop()
+    } else if (root.autoHide && root.dockReady && !root.dockHovered && !root.hideSuppressed) {
+      hideTimer.restart()
+    }
+  }
+
+  onDockReadyChanged: {
+    if (root.dockReady && root.autoHide && root.enabled && !root.dockHovered && !root.hideSuppressed)
+      hideTimer.restart()
+  }
+
+  onDockHoveredChanged: {
+    if (root.dockHovered) {
+      hideTimer.stop()
+      showTimer.stop()
+      if (root.autoHide && root.autoHidden) root.autoHidden = false
+    } else if (root.autoHide && root.enabled && root.dockReady && !root.hideSuppressed) {
+      hideTimer.restart()
+    }
   }
 
   function normalizeRunning() {
@@ -510,6 +588,11 @@ Item {
   }
 
   function menuAction(action, item) {
+    if (action === "toggleAutoHide") {
+      root.autoHide = !root.autoHide
+      root.saveSettings()
+      return
+    }
     if (!item) return
     if (action === "togglePin") root.pinnedIds = DockModel.togglePinned(root.pinnedIds, item.id)
     else if (action === "newWindow") handleClick({ id: item.id, name: item.name, running: false })
@@ -1013,10 +1096,48 @@ Item {
     printErrors: false
   }
 
+  FileView {
+    id: settingsWriter
+    watchChanges: false
+    printErrors: false
+  }
+
+  FileView {
+    id: settingsFile
+    path: root.settingsPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      var parsed = DockModel.parseSettings(text(), { autoHide: true })
+      if (!root.settingsLoaded) {
+        root.settingsLoaded = true
+        root.autoHide = parsed.autoHide
+      } else {
+        if (!DockModel.shouldReprocessSettings(text())) return
+        root.autoHide = parsed.autoHide
+      }
+      // If auto-hide is turned off, ensure the dock is fully revealed.
+      if (!root.autoHide) root.autoHidden = false
+    }
+    onFileChanged: {
+      if (Date.now() < root.settingsWriteUntil) return
+      settingsFile.reload()
+    }
+    onLoadFailed: {
+      root.settingsLoaded = true
+      root.autoHide = true
+    }
+  }
+
   Process {
     id: renameProcess
     command: ["mv", root.tempPinPath, root.pinPath]
     onExited: root.refreshItems()
+  }
+
+  Process {
+    id: settingsRenameProcess
+    command: ["mv", root.tempSettingsPath, root.settingsPath]
   }
 
   Component {
@@ -1187,14 +1308,14 @@ Item {
       id: dockSurface
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
-      anchors.bottomMargin: root.autoHide && !root.enabled ? -root.dockHeight + 14 : root.bottomMargin
+      anchors.bottomMargin: root.autoHide && root.autoHidden ? -root.dockHeight + root.peekPx : root.bottomMargin
       width: root.layoutWidth
       height: root.dockHeight
       radius: 18
       color: Util.alpha(Color.background, 0.50)
       border.color: Util.alpha(Color.foreground, 0.04)
       border.width: 1
-      opacity: root.autoHide && !root.enabled ? 0.55 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
+      opacity: !root.enabled ? 0 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
 
       // Glass highlight — subtle top edge that makes the tinted surface read as glass. Inside the
       // dockSurface so it follows the same radius/clipping and does not create a double border.
@@ -1209,7 +1330,7 @@ Item {
         NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
       }
       Behavior on anchors.bottomMargin {
-        NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
       }
       Behavior on opacity { NumberAnimation { duration: 180 } }
 
@@ -1319,11 +1440,16 @@ Item {
         z: -1
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
-        onEntered: { root.dockHovered = true; root.enabled = true; hideTimer.stop() }
+        onEntered: {
+          root.dockHovered = true
+          hideTimer.stop()
+          showTimer.stop()
+          if (root.autoHide && root.autoHidden) root.autoHidden = false
+        }
         onExited: {
           root.dockHovered = false
           root.clearHover()
-          if (root.autoHide && root.dockReady) hideTimer.restart()
+          if (root.autoHide && root.dockReady && root.enabled && !root.hideSuppressed) hideTimer.restart()
         }
         onPositionChanged: {
           root.hoveredMouseX = mouseArea.mapToItem(null, mouseX, mouseY).x
@@ -1373,23 +1499,45 @@ Item {
       anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
       height: 18
       hoverEnabled: true
-      onEntered: { root.dockHovered = true; hideTimer.stop() }
+      onEntered: {
+        root.dockHovered = true
+        hideTimer.stop()
+        showTimer.stop()
+        if (root.autoHide && root.autoHidden) root.autoHidden = false
+      }
       onExited: {
         root.dockHovered = false
         root.clearHover()
-        hideTimer.restart()
+        if (root.autoHide && root.dockReady && root.enabled && !root.hideSuppressed) hideTimer.restart()
+        else hideTimer.stop()
       }
     }
   }
 
   Timer {
     id: hideTimer
-    interval: 2000
-    onTriggered: if (root.autoHide && !root.menuOpen && !root.pickerOpen && !root.dockHovered) root.enabled = false
+    interval: root.hideDelay
+    onTriggered: {
+      if (!root.autoHide || !root.enabled || root.hideSuppressed || root.dockHovered) return
+      if (root.autoHidden) return
+      root.autoHidden = true
+    }
+  }
+
+  Timer {
+    id: showTimer
+    interval: root.showDelay
+    onTriggered: {
+      if (!root.autoHide || !root.enabled || !root.autoHidden) return
+      root.autoHidden = false
+      root.dockHovered = true
+      hideTimer.stop()
+    }
   }
 
   DockMenu {
     id: dockMenu
+    autoHideEnabled: root.autoHide
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false
   }
@@ -1459,22 +1607,57 @@ Item {
 
   // Tiling window adaptation: a transparent, input-less layer that reserves
   // the dock's footprint as a Wayland exclusive zone, so tiled windows never
-  // overlap the dock. A separate surface keeps the full-screen dockWindow
-  // (whose coordinate space drag ghosts and tooltips rely on) untouched; the
-  // zone is simply ignored on surfaces anchored to all four edges. When the
-  // dock is hidden the spacer unmaps and tiled windows reclaim the space.
+  // overlap the dock. In auto-hide (overlay) mode the zone is always 0 so
+  // tiled windows can use the full screen and the dock overlays them like
+  // macOS. A separate surface keeps the full-screen dockWindow (whose
+  // coordinate space drag ghosts and tooltips rely on) untouched; the zone is
+  // simply ignored on surfaces anchored to all four edges. When the dock is
+  // hidden the spacer unmaps and tiled windows reclaim the space.
   PanelWindow {
     id: dockSpacerWindow
-    visible: !root.conflictDetected && root.enabled
+    visible: !root.conflictDetected && root.enabled && !root.autoHide
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Background
     WlrLayershell.namespace: "macos-dock-spacer"
-    WlrLayershell.exclusiveZone: root.enabled ? root.dockHeight + root.bottomMargin : 0
+    WlrLayershell.exclusiveZone: root.autoHide ? 0 : (root.enabled ? root.dockHeight + root.bottomMargin : 0)
     anchors { bottom: true; left: true; right: true }
     implicitHeight: root.dockHeight + root.bottomMargin
     mask: Region {}
+  }
+
+  // Edge hot-zone: a 3px invisible strip at the screen bottom that reveals
+  // the dock even when it is fully slid off-screen. Using its own PanelWindow
+  // keeps hit-testing alive while dockWindow's mask is off-screen. The timer
+  // adds a subtle 100ms debounce so accidental brushes don't pop the dock.
+  PanelWindow {
+    id: edgeHotZone
+    visible: !root.conflictDetected && root.enabled && root.autoHide && root.autoHidden && root.dockReady
+    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.namespace: "macos-dock-edge"
+    anchors { bottom: true; left: true; right: true }
+    implicitHeight: root.edgeHeight
+    mask: Region { item: edgeMouse }
+
+    Item {
+      id: edgeMouse
+      anchors.fill: parent
+      MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        onEntered: {
+          if (!root.autoHide || !root.autoHidden) return
+          showTimer.restart()
+        }
+        onExited: {
+          showTimer.stop()
+        }
+      }
+    }
   }
 
   // The dragged icon lives in its own overlay window so it can follow the
