@@ -1358,10 +1358,15 @@ Item {
       border.width: 1
       opacity: !root.enabled ? 0 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
 
-      // Glass highlight — subtle top edge that makes the tinted surface read as glass. Inside the
-      // dockSurface so it follows the same radius/clipping and does not create a double border.
+      // Glass highlight — subtle top edge that makes the tinted surface read as glass. Inset
+      // by the dock's radius so it never sticks out beyond the rounded corners
+      // (previously the 1px bar at y=0 spanned 0→width and showed ~14px stubs
+      // on each side where the r=18 corner cuts in). Inside dockSurface so it
+      // follows the same clipping without needing clip:true (which would clip
+      // the magnified icons).
       Rectangle {
-        anchors { left: parent.left; right: parent.right; top: parent.top }
+        anchors { left: parent.left; right: parent.right; top: parent.top
+                  leftMargin: 18; rightMargin: 18 }
         height: 1
         radius: 1
         color: Util.alpha(Color.foreground, 0.10)
