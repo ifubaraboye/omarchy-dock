@@ -1530,8 +1530,13 @@ Item {
     onTriggered: {
       if (!root.autoHide || !root.enabled || !root.autoHidden) return
       root.autoHidden = false
-      root.dockHovered = true
       hideTimer.stop()
+      // If the cursor brushed the edge but never entered the dock, the dock
+      // would stay up forever with no exit event to arm hide. Arm it now;
+      // the dock's MouseArea onEntered will immediately cancel it if the
+      // cursor is actually over the dock.
+      if (!root.dockHovered && !root.hideSuppressed && root.dockReady)
+        hideTimer.restart()
     }
   }
 
