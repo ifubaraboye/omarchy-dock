@@ -86,6 +86,10 @@ Item {
   // The icon picker helper (~/.local/bin/omarchy-dock-icon) resolved at shell
   // start; falls back to PATH lookup so the GUI works however it was installed.
   property string helperPath: root.home + "/.local/bin/omarchy-dock-icon"
+  // Downloads / Trash — fixed special items at the right end, after the separator.
+  property string downloadsPath: home + "/Downloads"
+  property string trashFilesPath: home + "/.local/share/Trash/files"
+  property bool trashFull: false
 
   // Layout & drag state. The Repeater model (dockItems) is the stable identity
   // list of ids, replaced only when the id set changes; reorders go through
@@ -408,13 +412,20 @@ Item {
     var baseFlow = DockModel.buildFlow(root.dockOrder, [], root.floatingId, -1)
     if (root.floatingId && cursorX >= 0)
       root.tempDrag.index = DockModel.insertionIndexFor(cursorX, baseFlow, DockModel.LAYOUT_OPTS)
-    var flow = DockModel.buildFlow(
+    var mainFlow = DockModel.buildFlow(
       root.dockOrder,
       [],
       root.floatingId,
       root.floatingId ? root.tempDrag.index : -1
     )
-    var result = DockModel.computeLayout(flow, cursorX, DockModel.LAYOUT_OPTS)
+    // Full flow appends the fixed special items after the separator so they
+    // participate in the same magnification/spacing math and keep totalWidth
+    // accurate. Drag insertion stays limited to mainFlow.
+    var fullFlow = mainFlow.slice()
+    fullFlow.push({ id: "__separator__", separator: true })
+    fullFlow.push({ id: "downloads" })
+    fullFlow.push({ id: "trash" })
+    var result = DockModel.computeLayout(fullFlow, cursorX, DockModel.LAYOUT_OPTS)
     root.placements = result.placements
     root.layoutWidth = result.totalWidth
     for (var id in result.placements) {
@@ -425,6 +436,29 @@ Item {
       d.targetScale = p.scale
       d.targetLift = p.lift
       d.targetOpacity = (id === root.floatingId) ? 0 : (p.phantom ? 0.45 : 1)
+    }
+    // Position the fixed separator and special items from the same layout.
+    if (separatorItem) {
+      var sp = result.placements["__separator__"]
+      if (sp) { separatorItem.x = sp.x; separatorItem.visible = true }
+    }
+    if (downloadsWrapper) {
+      var dp = result.placements["downloads"]
+      if (dp) {
+        downloadsWrapper.x = dp.x
+        downloadsWrapper.targetScale = dp.scale
+        downloadsWrapper.targetLift = dp.lift
+        downloadsWrapper.targetOpacity = dp.phantom ? 0.45 : 1
+      }
+    }
+    if (trashWrapper) {
+      var tp = result.placements["trash"]
+      if (tp) {
+        trashWrapper.x = tp.x
+        trashWrapper.targetScale = tp.scale
+        trashWrapper.targetLift = tp.lift
+        trashWrapper.targetOpacity = tp.phantom ? 0.45 : 1
+      }
     }
     // The dragged item is excluded from the flow so it has no placement; hide
     // its dock copy while the ghost follows the cursor.
@@ -463,6 +497,27 @@ Item {
     var entry = DockModel.entryFor(item.id, root.appEntries)
     if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
       root.shell.appLibrary.launch(item.id, entry.name || item.name)
+  }
+
+  function openDownloads() {
+    hideTimer.stop()
+    Quickshell.execDetached(["xdg-open", root.downloadsPath])
+  }
+
+  function openTrash() {
+    hideTimer.stop()
+    // gio trash:// works on GNOME, fallback to the Trash/files path
+    Quickshell.execDetached(["bash", "-c", "xdg-open trash:/// 2>/dev/null || xdg-open \"" + root.trashFilesPath + "\" 2>/dev/null || xdg-open ~/.local/share/Trash 2>/dev/null &"])
+  }
+
+  function emptyTrash() {
+    Quickshell.execDetached(["bash", "-c", "gio trash --empty 2>/dev/null || rm -rf ~/.local/share/Trash/files/* ~/.local/share/Trash/info/* 2>/dev/null &"])
+    // Refresh status after a short delay
+    trashRefreshTimer.restart()
+  }
+
+  function updateTrashStatus() {
+    if (!trashCheckProcess.running) trashCheckProcess.running = true
   }
 
   // ---- Alt+Tab app switcher -------------------------------------------------
@@ -1282,6 +1337,7 @@ Item {
     root.refreshApps()
     root.refreshItems()
     if (!helperResolveProcess.running) helperResolveProcess.running = true
+    if (!trashCheckProcess.running) trashCheckProcess.running = true
     // The alt-tab HUD opens/closes on keypresses; Hyprland's default layer
     // fade would add a visible fade-in. Disable compositor animation for
     // both layer namespaces so the HUD pops in instantly.
@@ -1469,6 +1525,108 @@ Item {
             }
           }
         }
+
+        // Fixed separator — vertical line between apps and special items.
+        Item {
+          id: separatorItem
+          width: root.separatorWidth
+          height: 70
+          x: 0
+          visible: false
+          Rectangle {
+            anchors.centerIn: parent
+            width: 1
+            height: 36
+            radius: 0.5
+            color: Util.alpha(Color.foreground, 0.12)
+          }
+        }
+
+        // Downloads — folder that opens ~/Downloads.
+        Item {
+          id: downloadsWrapper
+          width: root.slotWidth * targetScale
+          height: 70
+          x: 0
+          property real targetScale: 1
+          property real targetLift: 0
+          property real targetOpacity: 1
+          Behavior on x { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
+          DockItem {
+            id: downloadsItem
+            anchors.centerIn: parent
+            itemData: ({ id: "downloads", name: "Downloads", icon: "folder-download", pinned: false, running: false })
+            iconSize: root.iconSize
+            animationEnabled: true
+            targetScale: downloadsWrapper.targetScale
+            targetLift: downloadsWrapper.targetLift
+            targetOpacity: downloadsWrapper.targetOpacity
+            iconSourceOverride: ""
+            onItemLeftClicked: root.openDownloads()
+            onItemRightClicked: root.openDownloads()
+            onTooltipRequested: function(item, isVisible, centerX) {
+              root.tooltipCenterX = centerX
+              root.showTooltip({ id: "downloads", name: "Downloads" }, isVisible)
+            }
+            onHoverPointerChanged: function(item, isInside, pointerX) {
+              if (isInside) {
+                root.hoveredItemId = "downloads"
+                root.hoveredMouseX = pointerX
+                root.tooltipCenterX = pointerX
+              } else if (root.hoveredItemId === "downloads") {
+                root.hoveredItemId = ""
+              }
+              root.applyLayout()
+            }
+          }
+        }
+
+        // Trash — shows empty/full and opens or empties.
+        Item {
+          id: trashWrapper
+          width: root.slotWidth * targetScale
+          height: 70
+          x: 0
+          property real targetScale: 1
+          property real targetLift: 0
+          property real targetOpacity: 1
+          Behavior on x { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
+          DockItem {
+            id: trashItem
+            anchors.centerIn: parent
+            itemData: ({ id: "trash", name: root.trashFull ? "Trash (Full)" : "Trash", icon: root.trashFull ? "user-trash-full" : "user-trash", pinned: false, running: false })
+            iconSize: root.iconSize
+            animationEnabled: true
+            targetScale: trashWrapper.targetScale
+            targetLift: trashWrapper.targetLift
+            targetOpacity: trashWrapper.targetOpacity
+            iconSourceOverride: ""
+            onItemLeftClicked: root.openTrash()
+            onItemRightClicked: function(item, pos) {
+              if (root.trashFull) {
+                // Simple confirm via empty directly; a full menu could be added later.
+                root.emptyTrash()
+              } else {
+                root.openTrash()
+              }
+            }
+            onTooltipRequested: function(item, isVisible, centerX) {
+              root.tooltipCenterX = centerX
+              var label = root.trashFull ? "Trash — Full (right-click to empty)" : "Trash"
+              root.showTooltip({ id: "trash", name: label }, isVisible)
+            }
+            onHoverPointerChanged: function(item, isInside, pointerX) {
+              if (isInside) {
+                root.hoveredItemId = "trash"
+                root.hoveredMouseX = pointerX
+                root.tooltipCenterX = pointerX
+              } else if (root.hoveredItemId === "trash") {
+                root.hoveredItemId = ""
+              }
+              root.applyLayout()
+            }
+          }
+        }
       }
 
       MouseArea {
@@ -1601,6 +1759,41 @@ Item {
         if (resolved) root.helperPath = resolved
       }
     }
+  }
+
+  // Trash full/empty detection — poll the Trash files directory.
+  Process {
+    id: trashCheckProcess
+    command: ["bash", "-c", "ls -A \"" + root.trashFilesPath + "\" 2>/dev/null | head -1 | grep -q . && echo full || echo empty"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var s = String(text || "").trim()
+        root.trashFull = (s === "full")
+      }
+    }
+  }
+
+  Timer {
+    id: trashPollTimer
+    interval: 5000
+    running: true
+    repeat: true
+    onTriggered: root.updateTrashStatus()
+  }
+
+  Timer {
+    id: trashRefreshTimer
+    interval: 600
+    onTriggered: root.updateTrashStatus()
+  }
+
+  FileView {
+    id: trashWatcher
+    path: root.trashFilesPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: trashRefreshTimer.restart()
   }
 
   // Persistence is written only after the settle animation finishes, matching
