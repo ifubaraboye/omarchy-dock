@@ -1526,6 +1526,10 @@ Item {
               }
               onHoverPointerChanged: function(hoveredItem, isInside, pointerX) {
                 if (isInside) {
+                  root.dockHovered = true
+                  hideTimer.stop()
+                  showTimer.stop()
+                  if (root.autoHide && root.autoHidden) root.autoHidden = false
                   root.hoveredItemId = hoveredItem.id
                   root.hoveredMouseX = pointerX
                   root.tooltipCenterX = pointerX
@@ -1536,6 +1540,10 @@ Item {
                   // snap-shrinking between items; clearHover() resets it when
                   // the cursor actually leaves the dock surface.
                   root.hoveredItemId = ""
+                  // Don't clear dockHovered here — the background MouseArea
+                  // will clear it only when the cursor truly leaves the dock
+                  // surface. This prevents a false leave when moving between
+                  // icons that would otherwise arm hide while still over dock.
                 }
                 root.applyLayout()
               }
@@ -1587,6 +1595,10 @@ Item {
             }
             onHoverPointerChanged: function(item, isInside, pointerX) {
               if (isInside) {
+                root.dockHovered = true
+                hideTimer.stop()
+                showTimer.stop()
+                if (root.autoHide && root.autoHidden) root.autoHidden = false
                 root.hoveredItemId = "downloads"
                 root.hoveredMouseX = pointerX
                 root.tooltipCenterX = pointerX
@@ -1627,6 +1639,10 @@ Item {
             }
             onHoverPointerChanged: function(item, isInside, pointerX) {
               if (isInside) {
+                root.dockHovered = true
+                hideTimer.stop()
+                showTimer.stop()
+                if (root.autoHide && root.autoHidden) root.autoHidden = false
                 root.hoveredItemId = "trash"
                 root.hoveredMouseX = pointerX
                 root.tooltipCenterX = pointerX
