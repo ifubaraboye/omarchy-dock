@@ -42,7 +42,10 @@ Item {
   property var dockItems: []
   property bool appLibraryReady: false
   property bool conflictDetected: false
-  property bool dockHovered: false
+  // dockHovered is true while cursor is over any icon (hoveredItemId) or over the dock background gaps.
+  // Using a binding avoids the fragile manual hover tracking where a MouseArea behind delegates
+  // didn't receive hover when an icon was on top, causing hide to arm while still over dock.
+  property bool dockHovered: hoveredItemId !== "" || (mouseArea && mouseArea.containsMouse)
   property bool menuOpen: false
   property bool pickerOpen: false
   property bool enabled: true
@@ -1526,24 +1529,11 @@ Item {
               }
               onHoverPointerChanged: function(hoveredItem, isInside, pointerX) {
                 if (isInside) {
-                  root.dockHovered = true
-                  hideTimer.stop()
-                  showTimer.stop()
-                  if (root.autoHide && root.autoHidden) root.autoHidden = false
                   root.hoveredItemId = hoveredItem.id
                   root.hoveredMouseX = pointerX
                   root.tooltipCenterX = pointerX
                 } else if (!root.floatingId && root.hoveredItemId === hoveredItem.id) {
-                  // The cursor left this item's hit area but is still on the
-                  // dock (or already inside a neighbor's). Keep hoveredMouseX
-                  // continuous so magnification glides across gaps instead of
-                  // snap-shrinking between items; clearHover() resets it when
-                  // the cursor actually leaves the dock surface.
                   root.hoveredItemId = ""
-                  // Don't clear dockHovered here — the background MouseArea
-                  // will clear it only when the cursor truly leaves the dock
-                  // surface. This prevents a false leave when moving between
-                  // icons that would otherwise arm hide while still over dock.
                 }
                 root.applyLayout()
               }
@@ -1595,10 +1585,6 @@ Item {
             }
             onHoverPointerChanged: function(item, isInside, pointerX) {
               if (isInside) {
-                root.dockHovered = true
-                hideTimer.stop()
-                showTimer.stop()
-                if (root.autoHide && root.autoHidden) root.autoHidden = false
                 root.hoveredItemId = "downloads"
                 root.hoveredMouseX = pointerX
                 root.tooltipCenterX = pointerX
@@ -1639,10 +1625,6 @@ Item {
             }
             onHoverPointerChanged: function(item, isInside, pointerX) {
               if (isInside) {
-                root.dockHovered = true
-                hideTimer.stop()
-                showTimer.stop()
-                if (root.autoHide && root.autoHidden) root.autoHidden = false
                 root.hoveredItemId = "trash"
                 root.hoveredMouseX = pointerX
                 root.tooltipCenterX = pointerX
@@ -1661,16 +1643,8 @@ Item {
         z: -1
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
-        onEntered: {
-          root.dockHovered = true
-          hideTimer.stop()
-          showTimer.stop()
-          if (root.autoHide && root.autoHidden) root.autoHidden = false
-        }
         onExited: {
-          root.dockHovered = false
           root.clearHover()
-          maybeScheduleHide()
         }
         onPositionChanged: {
           root.hoveredMouseX = mouseArea.mapToItem(null, mouseX, mouseY).x
@@ -1720,21 +1694,10 @@ Item {
       anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
       height: 18
       hoverEnabled: true
-      onEntered: {
-        root.dockHovered = true
-        hideTimer.stop()
-        showTimer.stop()
-        if (root.autoHide && root.autoHidden) root.autoHidden = false
-      }
-      onExited: {
-        // Leaving the bottom strip upward into the dock body still keeps the
-        // cursor over the main mouseArea. Do not clear hover/hide in that
-        // case — the parent area's onExited will handle the true exit.
-        if (mouseArea.containsMouse) return
-        root.dockHovered = false
-        root.clearHover()
-        maybeScheduleHide()
-      }
+      // Hover here is already covered by the full dockSurface mouseArea
+      // (containsMouse) and by icon hover (hoveredItemId). No manual
+      // dockHovered needed — the binding handles it.
+      onExited: root.clearHover()
     }
   }
 
