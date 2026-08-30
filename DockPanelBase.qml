@@ -689,6 +689,23 @@ Item {
       root.saveSettings()
       return
     }
+    // Special items: Downloads / Trash — treat menu actions as folder actions
+    if (item && (item.id === "downloads" || item.id === "trash")) {
+      if (action === "togglePin" || action === "newWindow") {
+        if (item.id === "downloads") root.openDownloads()
+        else root.openTrash()
+        return
+      }
+      if (action === "close") {
+        if (item.id === "trash") {
+          if (root.trashFull) root.emptyTrash()
+          else root.openTrash()
+        } else {
+          root.openDownloads()
+        }
+        return
+      }
+    }
     if (!item) return
     if (action === "togglePin") root.pinnedIds = DockModel.togglePinned(root.pinnedIds, item.id)
     else if (action === "newWindow") handleClick({ id: item.id, name: item.name, running: false })
@@ -1542,7 +1559,7 @@ Item {
           }
         }
 
-        // Downloads — folder that opens ~/Downloads.
+        // Downloads — folder that opens ~/Downloads. Right-click like any dock app → Get Info.
         Item {
           id: downloadsWrapper
           width: root.slotWidth * targetScale
@@ -1561,9 +1578,9 @@ Item {
             targetScale: downloadsWrapper.targetScale
             targetLift: downloadsWrapper.targetLift
             targetOpacity: downloadsWrapper.targetOpacity
-            iconSourceOverride: ""
+            iconSourceOverride: root.iconSourceFor("downloads") || root.iconSourceFor({ id: "downloads", icon: "folder-download" })
             onItemLeftClicked: root.openDownloads()
-            onItemRightClicked: root.openDownloads()
+            onItemRightClicked: function(item, pos) { root.openMenu(item, pos) }
             onTooltipRequested: function(item, isVisible, centerX) {
               root.tooltipCenterX = centerX
               root.showTooltip({ id: "downloads", name: "Downloads" }, isVisible)
@@ -1581,7 +1598,7 @@ Item {
           }
         }
 
-        // Trash — shows empty/full and opens or empties.
+        // Trash — shows empty/full and opens or empties. Right-click like any dock app → Get Info.
         Item {
           id: trashWrapper
           width: root.slotWidth * targetScale
@@ -1600,19 +1617,12 @@ Item {
             targetScale: trashWrapper.targetScale
             targetLift: trashWrapper.targetLift
             targetOpacity: trashWrapper.targetOpacity
-            iconSourceOverride: ""
+            iconSourceOverride: root.iconSourceFor("trash") || root.iconSourceFor({ id: "trash", icon: root.trashFull ? "user-trash-full" : "user-trash" })
             onItemLeftClicked: root.openTrash()
-            onItemRightClicked: function(item, pos) {
-              if (root.trashFull) {
-                // Simple confirm via empty directly; a full menu could be added later.
-                root.emptyTrash()
-              } else {
-                root.openTrash()
-              }
-            }
+            onItemRightClicked: function(item, pos) { root.openMenu(item, pos) }
             onTooltipRequested: function(item, isVisible, centerX) {
               root.tooltipCenterX = centerX
-              var label = root.trashFull ? "Trash — Full (right-click to empty)" : "Trash"
+              var label = root.trashFull ? "Trash — Full (right-click → Empty)" : "Trash"
               root.showTooltip({ id: "trash", name: label }, isVisible)
             }
             onHoverPointerChanged: function(item, isInside, pointerX) {
