@@ -117,6 +117,7 @@ Item {
         cache: true
 
         Text {
+        textFormat: Text.PlainText
           anchors.centerIn: parent
           visible: parent.status !== Image.Ready
           text: "◆"
@@ -137,6 +138,7 @@ Item {
   }
 
   Text {
+        textFormat: Text.PlainText
     id: titleText
     anchors { top: card.bottom; left: parent.left; right: parent.right }
     height: 22

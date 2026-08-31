@@ -59,6 +59,7 @@ PanelWindow {
           color: !modelData.separator && buttonMouse.containsMouse ? Util.alpha(Color.foreground, 0.10) : "transparent"
 
           Text {
+        textFormat: Text.PlainText
             visible: !modelData.separator
             anchors.fill: parent
             anchors.leftMargin: 10

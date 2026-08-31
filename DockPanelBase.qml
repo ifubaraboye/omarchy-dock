@@ -1546,6 +1546,7 @@ Item {
       border.color: Util.alpha(Color.foreground, 0.08)
       border.width: 1
       Text {
+        textFormat: Text.PlainText
         id: tooltipText
         anchors.centerIn: parent
         text: root.tooltipItem ? (root.tooltipItem.name || root.tooltipItem.id) : ""

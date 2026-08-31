@@ -169,6 +169,7 @@ PanelWindow {
             cache: true
 
             Text {
+        textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: parent.status !== Image.Ready
               text: "◆"

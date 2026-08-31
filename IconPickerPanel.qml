@@ -316,6 +316,7 @@ PanelWindow {
               cache: true
 
               Text {
+        textFormat: Text.PlainText
                 anchors.centerIn: parent
                 visible: parent.status !== Image.Ready
                 text: "◆"
@@ -331,6 +332,7 @@ PanelWindow {
             spacing: 2
 
             Text {
+        textFormat: Text.PlainText
               width: parent.width
               text: root.mode === "picker" ? root.currentAppName : "Icon Manager"
               elide: Text.ElideRight
@@ -340,6 +342,7 @@ PanelWindow {
               font.bold: true
             }
             Text {
+        textFormat: Text.PlainText
               width: parent.width
               text: root.mode === "picker"
                 ? "Change the icon shown for this app"
@@ -361,6 +364,7 @@ PanelWindow {
             visible: root.mode === "picker" && root.fromManage
 
             Text {
+        textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "‹ All apps"
               color: Color.foreground
@@ -384,6 +388,7 @@ PanelWindow {
             color: closeMouse.containsMouse ? Util.alpha(Color.foreground, 0.10) : "transparent"
 
             Text {
+        textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "✕"
               color: Color.foreground
@@ -410,6 +415,7 @@ PanelWindow {
           border.width: 1
 
           Text {
+        textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.leftMargin: 12
             anchors.verticalCenter: parent.verticalCenter
@@ -489,6 +495,7 @@ PanelWindow {
             radius: 8
             color: pasteApplyMouse.containsMouse ? Util.alpha(Color.accent, 0.85) : Util.alpha(Color.accent, 0.7)
             Text {
+        textFormat: Text.PlainText
               anchors.centerIn: parent
               text: "Apply"
               color: Color.background
@@ -554,6 +561,7 @@ PanelWindow {
                 }
 
                 Text {
+        textFormat: Text.PlainText
                   anchors.horizontalCenter: parent.horizontalCenter
                   width: root.gridCell - 12
                   text: modelData.appName || "icon"
@@ -575,6 +583,7 @@ PanelWindow {
             }
 
             Text {
+        textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: root.results.length === 0 && root.statusText === ""
               text: "Type to search macOSicons"
@@ -616,6 +625,7 @@ PanelWindow {
               }
 
               Text {
+        textFormat: Text.PlainText
                 anchors.left: rowIcon.right
                 anchors.leftMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
@@ -638,6 +648,7 @@ PanelWindow {
                   radius: 8
                   color: changeMouse.containsMouse ? Util.alpha(Color.foreground, 0.16) : Util.alpha(Color.foreground, 0.08)
                   Text {
+        textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: "Change"
                     color: Color.foreground
@@ -660,6 +671,7 @@ PanelWindow {
                   color: clearMouse.containsMouse ? Util.alpha(Color.foreground, 0.16) : Util.alpha(Color.foreground, 0.08)
                   visible: root.appHasCustomIcon(modelData.id)
                   Text {
+        textFormat: Text.PlainText
                     anchors.centerIn: parent
                     text: "Clear"
                     color: Color.foreground
@@ -686,6 +698,7 @@ PanelWindow {
             }
 
             Text {
+        textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: root.appRows.length === 0
               text: root.shell && root.shell.appLibrary ? "No apps match" : "App library unavailable"
@@ -742,6 +755,7 @@ PanelWindow {
           height: 16
 
           Text {
+        textFormat: Text.PlainText
             width: parent.width
             text: root.statusText
             elide: Text.ElideRight
@@ -770,6 +784,7 @@ PanelWindow {
     signal clicked()
 
     Text {
+        textFormat: Text.PlainText
       anchors.centerIn: parent
       text: buttonSelf.text
       color: buttonSelf.accent ? Color.background : Color.foreground
