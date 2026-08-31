@@ -204,6 +204,7 @@ Item {
       showTimer.stop()
       if (root.autoHide && root.autoHidden) root.autoHidden = false
     } else {
+      root.clearHover()
       maybeScheduleHide()
     }
   }
@@ -421,13 +422,7 @@ Item {
       root.floatingId,
       root.floatingId ? root.tempDrag.index : -1
     )
-    // Full flow appends the fixed special items after the separator so they
-    // participate in the same magnification/spacing math and keep totalWidth
-    // accurate. Drag insertion stays limited to mainFlow.
     var fullFlow = mainFlow.slice()
-    fullFlow.push({ id: "__separator__", separator: true })
-    fullFlow.push({ id: "downloads" })
-    fullFlow.push({ id: "trash" })
     var result = DockModel.computeLayout(fullFlow, cursorX, DockModel.LAYOUT_OPTS)
     root.placements = result.placements
     root.layoutWidth = result.totalWidth
@@ -439,29 +434,6 @@ Item {
       d.targetScale = p.scale
       d.targetLift = p.lift
       d.targetOpacity = (id === root.floatingId) ? 0 : (p.phantom ? 0.45 : 1)
-    }
-    // Position the fixed separator and special items from the same layout.
-    if (separatorItem) {
-      var sp = result.placements["__separator__"]
-      if (sp) { separatorItem.x = sp.x; separatorItem.visible = true }
-    }
-    if (downloadsWrapper) {
-      var dp = result.placements["downloads"]
-      if (dp) {
-        downloadsWrapper.x = dp.x
-        downloadsWrapper.targetScale = dp.scale
-        downloadsWrapper.targetLift = dp.lift
-        downloadsWrapper.targetOpacity = dp.phantom ? 0.45 : 1
-      }
-    }
-    if (trashWrapper) {
-      var tp = result.placements["trash"]
-      if (tp) {
-        trashWrapper.x = tp.x
-        trashWrapper.targetScale = tp.scale
-        trashWrapper.targetLift = tp.lift
-        trashWrapper.targetOpacity = tp.phantom ? 0.45 : 1
-      }
     }
     // The dragged item is excluded from the flow so it has no placement; hide
     // its dock copy while the ghost follows the cursor.
@@ -1541,100 +1513,6 @@ Item {
           }
         }
 
-        // Fixed separator — vertical line between apps and special items.
-        Item {
-          id: separatorItem
-          width: root.separatorWidth
-          height: 70
-          x: 0
-          visible: false
-          Rectangle {
-            anchors.centerIn: parent
-            width: 1
-            height: 36
-            radius: 0.5
-            color: Util.alpha(Color.foreground, 0.12)
-          }
-        }
-
-        // Downloads — folder that opens ~/Downloads. Right-click like any dock app → Get Info.
-        Item {
-          id: downloadsWrapper
-          width: root.slotWidth * targetScale
-          height: 70
-          x: 0
-          property real targetScale: 1
-          property real targetLift: 0
-          property real targetOpacity: 1
-          Behavior on x { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
-          DockItem {
-            id: downloadsItem
-            anchors.centerIn: parent
-            itemData: ({ id: "downloads", name: "Downloads", icon: "folder-download", pinned: false, running: false })
-            iconSize: root.iconSize
-            animationEnabled: true
-            targetScale: downloadsWrapper.targetScale
-            targetLift: downloadsWrapper.targetLift
-            targetOpacity: downloadsWrapper.targetOpacity
-            iconSourceOverride: root.iconSourceFor("downloads") || root.iconSourceFor({ id: "downloads", icon: "folder-download" })
-            onItemLeftClicked: root.openDownloads()
-            onItemRightClicked: function(item, pos) { root.openMenu(item, pos) }
-            onTooltipRequested: function(item, isVisible, centerX) {
-              root.tooltipCenterX = centerX
-              root.showTooltip({ id: "downloads", name: "Downloads" }, isVisible)
-            }
-            onHoverPointerChanged: function(item, isInside, pointerX) {
-              if (isInside) {
-                root.hoveredItemId = "downloads"
-                root.hoveredMouseX = pointerX
-                root.tooltipCenterX = pointerX
-              } else if (root.hoveredItemId === "downloads") {
-                root.hoveredItemId = ""
-              }
-              root.applyLayout()
-            }
-          }
-        }
-
-        // Trash — shows empty/full and opens or empties. Right-click like any dock app → Get Info.
-        Item {
-          id: trashWrapper
-          width: root.slotWidth * targetScale
-          height: 70
-          x: 0
-          property real targetScale: 1
-          property real targetLift: 0
-          property real targetOpacity: 1
-          Behavior on x { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
-          DockItem {
-            id: trashItem
-            anchors.centerIn: parent
-            itemData: ({ id: "trash", name: root.trashFull ? "Trash (Full)" : "Trash", icon: root.trashFull ? "user-trash-full" : "user-trash", pinned: false, running: false })
-            iconSize: root.iconSize
-            animationEnabled: true
-            targetScale: trashWrapper.targetScale
-            targetLift: trashWrapper.targetLift
-            targetOpacity: trashWrapper.targetOpacity
-            iconSourceOverride: root.iconSourceFor("trash") || root.iconSourceFor({ id: "trash", icon: root.trashFull ? "user-trash-full" : "user-trash" })
-            onItemLeftClicked: root.openTrash()
-            onItemRightClicked: function(item, pos) { root.openMenu(item, pos) }
-            onTooltipRequested: function(item, isVisible, centerX) {
-              root.tooltipCenterX = centerX
-              var label = root.trashFull ? "Trash — Full (right-click → Empty)" : "Trash"
-              root.showTooltip({ id: "trash", name: label }, isVisible)
-            }
-            onHoverPointerChanged: function(item, isInside, pointerX) {
-              if (isInside) {
-                root.hoveredItemId = "trash"
-                root.hoveredMouseX = pointerX
-                root.tooltipCenterX = pointerX
-              } else if (root.hoveredItemId === "trash") {
-                root.hoveredItemId = ""
-              }
-              root.applyLayout()
-            }
-          }
-        }
       }
 
       MouseArea {
