@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "macos.dock",
   "name": "macOS Style Dock",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "author": "ifubaraboye",
   "description": "A compact, glassy, configurable macOS style dock with pinning, auto-hiding and Alt+Tab app switcher. Right click to change icons on the dock.",
   "kinds": ["panel"],

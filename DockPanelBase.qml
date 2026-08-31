@@ -42,7 +42,10 @@ Item {
   property var dockItems: []
   property bool appLibraryReady: false
   property bool conflictDetected: false
-  property bool dockHovered: false
+  // dockHovered is true while cursor is over any icon (hoveredItemId) or over the dock background gaps.
+  // Using a binding avoids the fragile manual hover tracking where a MouseArea behind delegates
+  // didn't receive hover when an icon was on top, causing hide to arm while still over dock.
+  property bool dockHovered: hoveredItemId !== "" || (mouseArea && mouseArea.containsMouse)
   property bool menuOpen: false
   property bool pickerOpen: false
   property bool enabled: true
@@ -86,6 +89,10 @@ Item {
   // The icon picker helper (~/.local/bin/omarchy-dock-icon) resolved at shell
   // start; falls back to PATH lookup so the GUI works however it was installed.
   property string helperPath: root.home + "/.local/bin/omarchy-dock-icon"
+  // Downloads / Trash — fixed special items at the right end, after the separator.
+  property string downloadsPath: home + "/Downloads"
+  property string trashFilesPath: home + "/.local/share/Trash/files"
+  property bool trashFull: false
 
   // Layout & drag state. The Repeater model (dockItems) is the stable identity
   // list of ids, replaced only when the id set changes; reorders go through
@@ -197,6 +204,7 @@ Item {
       showTimer.stop()
       if (root.autoHide && root.autoHidden) root.autoHidden = false
     } else {
+      root.clearHover()
       maybeScheduleHide()
     }
   }
@@ -408,13 +416,14 @@ Item {
     var baseFlow = DockModel.buildFlow(root.dockOrder, [], root.floatingId, -1)
     if (root.floatingId && cursorX >= 0)
       root.tempDrag.index = DockModel.insertionIndexFor(cursorX, baseFlow, DockModel.LAYOUT_OPTS)
-    var flow = DockModel.buildFlow(
+    var mainFlow = DockModel.buildFlow(
       root.dockOrder,
       [],
       root.floatingId,
       root.floatingId ? root.tempDrag.index : -1
     )
-    var result = DockModel.computeLayout(flow, cursorX, DockModel.LAYOUT_OPTS)
+    var fullFlow = mainFlow.slice()
+    var result = DockModel.computeLayout(fullFlow, cursorX, DockModel.LAYOUT_OPTS)
     root.placements = result.placements
     root.layoutWidth = result.totalWidth
     for (var id in result.placements) {
@@ -463,6 +472,27 @@ Item {
     var entry = DockModel.entryFor(item.id, root.appEntries)
     if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
       root.shell.appLibrary.launch(item.id, entry.name || item.name)
+  }
+
+  function openDownloads() {
+    hideTimer.stop()
+    Quickshell.execDetached(["xdg-open", root.downloadsPath])
+  }
+
+  function openTrash() {
+    hideTimer.stop()
+    // gio trash:// works on GNOME, fallback to the Trash/files path
+    Quickshell.execDetached(["bash", "-c", "xdg-open trash:/// 2>/dev/null || xdg-open \"" + root.trashFilesPath + "\" 2>/dev/null || xdg-open ~/.local/share/Trash 2>/dev/null &"])
+  }
+
+  function emptyTrash() {
+    Quickshell.execDetached(["bash", "-c", "gio trash --empty 2>/dev/null || rm -rf ~/.local/share/Trash/files/* ~/.local/share/Trash/info/* 2>/dev/null &"])
+    // Refresh status after a short delay
+    trashRefreshTimer.restart()
+  }
+
+  function updateTrashStatus() {
+    if (!trashCheckProcess.running) trashCheckProcess.running = true
   }
 
   // ---- Alt+Tab app switcher -------------------------------------------------
@@ -633,6 +663,23 @@ Item {
       root.autoHide = !root.autoHide
       root.saveSettings()
       return
+    }
+    // Special items: Downloads / Trash — treat menu actions as folder actions
+    if (item && (item.id === "downloads" || item.id === "trash")) {
+      if (action === "togglePin" || action === "newWindow") {
+        if (item.id === "downloads") root.openDownloads()
+        else root.openTrash()
+        return
+      }
+      if (action === "close") {
+        if (item.id === "trash") {
+          if (root.trashFull) root.emptyTrash()
+          else root.openTrash()
+        } else {
+          root.openDownloads()
+        }
+        return
+      }
     }
     if (!item) return
     if (action === "togglePin") root.pinnedIds = DockModel.togglePinned(root.pinnedIds, item.id)
@@ -1282,6 +1329,7 @@ Item {
     root.refreshApps()
     root.refreshItems()
     if (!helperResolveProcess.running) helperResolveProcess.running = true
+    if (!trashCheckProcess.running) trashCheckProcess.running = true
     // The alt-tab HUD opens/closes on keypresses; Hyprland's default layer
     // fade would add a visible fade-in. Disable compositor animation for
     // both layer namespaces so the HUD pops in instantly.
@@ -1457,11 +1505,6 @@ Item {
                   root.hoveredMouseX = pointerX
                   root.tooltipCenterX = pointerX
                 } else if (!root.floatingId && root.hoveredItemId === hoveredItem.id) {
-                  // The cursor left this item's hit area but is still on the
-                  // dock (or already inside a neighbor's). Keep hoveredMouseX
-                  // continuous so magnification glides across gaps instead of
-                  // snap-shrinking between items; clearHover() resets it when
-                  // the cursor actually leaves the dock surface.
                   root.hoveredItemId = ""
                 }
                 root.applyLayout()
@@ -1469,6 +1512,7 @@ Item {
             }
           }
         }
+
       }
 
       MouseArea {
@@ -1477,16 +1521,8 @@ Item {
         z: -1
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
-        onEntered: {
-          root.dockHovered = true
-          hideTimer.stop()
-          showTimer.stop()
-          if (root.autoHide && root.autoHidden) root.autoHidden = false
-        }
         onExited: {
-          root.dockHovered = false
           root.clearHover()
-          maybeScheduleHide()
         }
         onPositionChanged: {
           root.hoveredMouseX = mouseArea.mapToItem(null, mouseX, mouseY).x
@@ -1536,21 +1572,10 @@ Item {
       anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
       height: 18
       hoverEnabled: true
-      onEntered: {
-        root.dockHovered = true
-        hideTimer.stop()
-        showTimer.stop()
-        if (root.autoHide && root.autoHidden) root.autoHidden = false
-      }
-      onExited: {
-        // Leaving the bottom strip upward into the dock body still keeps the
-        // cursor over the main mouseArea. Do not clear hover/hide in that
-        // case — the parent area's onExited will handle the true exit.
-        if (mouseArea.containsMouse) return
-        root.dockHovered = false
-        root.clearHover()
-        maybeScheduleHide()
-      }
+      // Hover here is already covered by the full dockSurface mouseArea
+      // (containsMouse) and by icon hover (hoveredItemId). No manual
+      // dockHovered needed — the binding handles it.
+      onExited: root.clearHover()
     }
   }
 
@@ -1601,6 +1626,41 @@ Item {
         if (resolved) root.helperPath = resolved
       }
     }
+  }
+
+  // Trash full/empty detection — poll the Trash files directory.
+  Process {
+    id: trashCheckProcess
+    command: ["bash", "-c", "ls -A \"" + root.trashFilesPath + "\" 2>/dev/null | head -1 | grep -q . && echo full || echo empty"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var s = String(text || "").trim()
+        root.trashFull = (s === "full")
+      }
+    }
+  }
+
+  Timer {
+    id: trashPollTimer
+    interval: 5000
+    running: true
+    repeat: true
+    onTriggered: root.updateTrashStatus()
+  }
+
+  Timer {
+    id: trashRefreshTimer
+    interval: 600
+    onTriggered: root.updateTrashStatus()
+  }
+
+  FileView {
+    id: trashWatcher
+    path: root.trashFilesPath
+    watchChanges: true
+    printErrors: false
+    onFileChanged: trashRefreshTimer.restart()
   }
 
   // Persistence is written only after the settle animation finishes, matching
