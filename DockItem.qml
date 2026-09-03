@@ -19,6 +19,12 @@ Item {
   property bool tooltipVisible: false
   property string iconSourceOverride: ""
   property point pressPosition: Qt.point(0, 0)
+  // macOS-style launch bounce: isolated vertical offset added on top of the
+  // hover lift so magnification/scale are never disturbed. Spring-like damped
+  // motion (explicit decaying keyframes, ~950ms total, 3 upward impulses).
+  property real launchBounceHeight: 28
+  property real bounceOffset: 0
+  signal launchBounceFinished()
 
   signal dragMoved(var itemData, point position)
   signal dragFinished(var itemData, point position)
@@ -48,13 +54,42 @@ Item {
     enabled: root.animationEnabled
     SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
-  y: -root.targetLift
+  y: -root.targetLift + root.bounceOffset
 
   Behavior on opacity {
     enabled: root.animationEnabled
     NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
   }
   opacity: root.targetOpacity
+
+  // One-shot launch bounce. Runs to completion once started; never driven by
+  // the running state, so a mid-animation state refresh cannot restart it.
+  // Always finishes at exactly 0 so hover lift positioning is never corrupted.
+  SequentialAnimation {
+    id: launchBounceAnim
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight; duration: 180; easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight; to: 0; duration: 170; easing.type: Easing.InCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.55; duration: 150; easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.55; to: 0; duration: 150; easing.type: Easing.InCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.25; duration: 140; easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.25; to: 0; duration: 160; easing.type: Easing.InOutCubic }
+    onFinished: {
+      root.bounceOffset = 0
+      root.launchBounceFinished()
+    }
+  }
+
+  function playLaunchBounce() {
+    if (!root.animationEnabled || root.isDragging) return false
+    if (launchBounceAnim.running) return false
+    launchBounceAnim.restart()
+    return true
+  }
+
+  function cancelLaunchBounce() {
+    launchBounceAnim.stop()
+    root.bounceOffset = 0
+  }
 
   Image {
     id: icon

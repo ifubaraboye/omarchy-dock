@@ -120,6 +120,16 @@ Item {
   // avoids the PanelWindow's output-anchored scene space entirely, so the
   // check is a plain AABB against the surface the input mask hit-tests.
   property bool dragInsideDock: true
+  // macOS-style launch bounce (one-shot, vertical only). Two guards:
+  // bouncingIds = animations currently playing (prevents overlap);
+  // launchBounceConsumed = optimistic Dock launches already bounced, keyed by
+  // id with a timestamp (prevents a slow-starting app from bouncing twice:
+  // click bounces immediately, the later NOT RUNNING -> RUNNING transition
+  // is then consumed instead of bouncing again). Entries expire so a failed
+  // launch never suppresses a future launch bounce permanently.
+  property var bouncingIds: []
+  property var launchBounceConsumed: ({})
+  property int launchBounceExpiryMs: 60000
 
   IpcHandler {
     target: "macos.dock"
@@ -339,7 +349,9 @@ Item {
   }
 
   function refreshItems() {
-    root.runningIds = normalizeRunning()
+    var prevRunning = root.runningIds ? root.runningIds.slice() : []
+    var nextRunning = normalizeRunning()
+    root.runningIds = nextRunning
     // The session order is authoritative: it preserves drag rearrangements of
     // any app (pinned or running) while dropping apps that closed and
     // appending newly opened ones. Pinned apps stay pinned; running apps are
@@ -361,6 +373,16 @@ Item {
         root.dockItems = root.dockOrder.slice()
     }
     root.applyLayout()
+    // Launch bounce: any NOT RUNNING -> RUNNING transition bounces once.
+    // Optimistic Dock clicks already bounced and marked the launch consumed,
+    // so the late transition is swallowed instead of bouncing a second time.
+    // External launches have no consumed mark and bounce here.
+    for (var i = 0; i < nextRunning.length; i++) {
+      var rid = nextRunning[i]
+      if (prevRunning.indexOf(rid) !== -1) continue
+      if (root.takeConsumedLaunch(rid)) continue
+      root.triggerLaunchBounce(rid)
+    }
   }
 
   // Order-insensitive id-set equality: the model must survive reorders and
@@ -388,7 +410,81 @@ Item {
   }
 
   function registerItem(id, item) { root.delegateById[id] = item }
-  function unregisterItem(id) { delete root.delegateById[id] }
+  function unregisterItem(id) {
+    delete root.delegateById[id]
+    var i = root.bouncingIds.indexOf(id)
+    if (i !== -1) {
+      var next = root.bouncingIds.slice()
+      next.splice(i, 1)
+      root.bouncingIds = next
+    }
+  }
+
+  // ---- Launch bounce (macOS "animate opening applications") ----------------
+  // One user launch = one fixed one-shot bounce. The animation always runs to
+  // completion; `running` is only the launch detector, never a stop signal.
+  function consumeLaunchBounce(id) {
+    if (!id) return
+    root.launchBounceConsumed[id] = Date.now()
+  }
+  // Returns true when a NOT RUNNING -> RUNNING transition was already covered
+  // by an optimistic Dock click bounce. Expired entries are treated as absent
+  // so failed launches eventually release their guard.
+  function takeConsumedLaunch(id) {
+    if (!id || !root.launchBounceConsumed[id]) return false
+    var age = Date.now() - root.launchBounceConsumed[id]
+    delete root.launchBounceConsumed[id]
+    return age <= root.launchBounceExpiryMs
+  }
+  function sweepLaunchBounceConsumed() {
+    var now = Date.now()
+    var swept = false
+    for (var id in root.launchBounceConsumed) {
+      if (now - root.launchBounceConsumed[id] > root.launchBounceExpiryMs) {
+        delete root.launchBounceConsumed[id]
+        swept = true
+      }
+    }
+    if (swept) root.launchBounceConsumedChanged()
+  }
+  function triggerLaunchBounce(id) {
+    if (!id || id === "__phantom__") return
+    if (id === root.floatingId) return
+    if (root.bouncingIds.indexOf(id) !== -1) return
+    var d = root.delegateById[id]
+    if (d && typeof d.playBounce === "function") {
+      root.bouncingIds = root.bouncingIds.concat([id])
+      // playBounce returns false when gated (animation disabled / dragging);
+      // drop the guard immediately so it cannot leak without a finish signal.
+      if (!d.playBounce()) root.finishLaunchBounce(id)
+    } else if (!d) {
+      // Delegate does not exist yet (newly appearing app): record the intent
+      // and Component.onCompleted auto-plays on creation.
+      root.bouncingIds = root.bouncingIds.concat([id])
+    }
+  }
+  function finishLaunchBounce(id) {
+    var i = root.bouncingIds.indexOf(id)
+    if (i !== -1) {
+      var next = root.bouncingIds.slice()
+      next.splice(i, 1)
+      root.bouncingIds = next
+    }
+    var d = root.delegateById[id]
+    if (d) d.bounceOffset = 0
+  }
+  function cancelLaunchBounce(id) {
+    if (!id) return
+    var d = root.delegateById[id]
+    if (d && typeof d.cancelBounce === "function") d.cancelBounce()
+    else if (d) d.bounceOffset = 0
+    var i = root.bouncingIds.indexOf(id)
+    if (i !== -1) {
+      var next = root.bouncingIds.slice()
+      next.splice(i, 1)
+      root.bouncingIds = next
+    }
+  }
 
   // Live metadata for a dock id, mirrored from the observable root state so a
   // delegate's itemData updates in place instead of the Repeater rebuilding.
@@ -470,6 +566,12 @@ Item {
       } catch (error) {}
     }
     var entry = DockModel.entryFor(item.id, root.appEntries)
+    // Optimistic launch bounce: the app is not running, so bounce immediately
+    // (no artificial delay) and mark the launch consumed. When the app later
+    // appears in runningIds, refreshItems() swallows that transition instead
+    // of bouncing a second time. The animation always runs to completion.
+    root.consumeLaunchBounce(item.id)
+    root.triggerLaunchBounce(item.id)
     if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
       root.shell.appLibrary.launch(item.id, entry.name || item.name)
   }
@@ -725,6 +827,9 @@ Item {
       root.ghostOpacity = 1
       root.tooltipVisible = false
       root.tooltipItem = null
+      // Dragging takes priority over the launch bounce: cancel any active
+      // bounce so no stale vertical offset survives the drag.
+      root.cancelLaunchBounce(item.id)
     }
     root.hoveredMouseX = position.x
     root.hidePreview()
@@ -1457,6 +1562,9 @@ Item {
             property alias targetScale: dockItem.targetScale
             property alias targetLift: dockItem.targetLift
             property alias targetOpacity: dockItem.targetOpacity
+            property alias bounceOffset: dockItem.bounceOffset
+            function playBounce() { return dockItem.playLaunchBounce() }
+            function cancelBounce() { dockItem.cancelLaunchBounce() }
 
             Behavior on x {
               enabled: wrapper.animating
@@ -1471,6 +1579,10 @@ Item {
               targetLift = seed.lift
               targetOpacity = (modelData === root.floatingId) ? 0 : 1
               animating = true
+              // Newly appearing launched app: the bounce intent was recorded
+              // before this delegate existed; play it now that animation is on.
+              if (root.bouncingIds.indexOf(modelData) !== -1 && !dockItem.playLaunchBounce())
+                root.finishLaunchBounce(modelData)
             }
             Component.onDestruction: {
               root.visualCache[modelData] = { x: x, scale: targetScale, lift: targetLift }
@@ -1486,6 +1598,7 @@ Item {
               iconSourceOverride: root.iconSourceFor(modelData)
               onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
               onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+              onLaunchBounceFinished: root.finishLaunchBounce(modelData)
               onDragMoved: function(draggedItem, position) {
                 root.onDragMoved(draggedItem,
                   dockItem.mapToItem(null, position.x, position.y),
@@ -1681,6 +1794,16 @@ Item {
       root.ghostOpacity = 1
       root.ghostScale = 1.18
     }
+  }
+
+  // Launch-bounce consumed guard expiry: a failed launch (never becomes
+  // running) must not suppress a future launch bounce permanently.
+  Timer {
+    id: launchBounceExpiryTimer
+    interval: 30000
+    running: true
+    repeat: true
+    onTriggered: root.sweepLaunchBounceConsumed()
   }
 
   // Hover-to-preview lives in its own overlay layer window so it can extend
