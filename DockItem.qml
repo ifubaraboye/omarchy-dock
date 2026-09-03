@@ -54,7 +54,12 @@ Item {
     enabled: root.animationEnabled
     SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
-  y: -root.targetLift + root.bounceOffset
+  y: -root.targetLift
+  // NOTE: DockItem is placed via anchors.centerIn by the delegate, and
+  // anchors take precedence over x/y — so vertical motion must go through
+  // verticalCenterOffset, not y. (The pre-existing y/targetLift binding is
+  // left untouched.) bounceOffset is negative-up, matching macOS motion.
+  anchors.verticalCenterOffset: root.bounceOffset
 
   Behavior on opacity {
     enabled: root.animationEnabled

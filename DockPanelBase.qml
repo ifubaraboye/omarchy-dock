@@ -120,16 +120,13 @@ Item {
   // avoids the PanelWindow's output-anchored scene space entirely, so the
   // check is a plain AABB against the surface the input mask hit-tests.
   property bool dragInsideDock: true
-  // macOS-style launch bounce (one-shot, vertical only). Two guards:
-  // bouncingIds = animations currently playing (prevents overlap);
-  // launchBounceConsumed = optimistic Dock launches already bounced, keyed by
-  // id with a timestamp (prevents a slow-starting app from bouncing twice:
-  // click bounces immediately, the later NOT RUNNING -> RUNNING transition
-  // is then consumed instead of bouncing again). Entries expire so a failed
-  // launch never suppresses a future launch bounce permanently.
+  // macOS-style launch bounce (one-shot, vertical only). Triggered purely by
+  // the NOT RUNNING -> RUNNING transition in refreshItems(), so the bounce
+  // coincides with the app actually opening — never with the click itself.
+  // Transitions are edge-triggered, giving exactly one bounce per launch.
+  // bouncingIds tracks animations currently playing (prevents overlap and
+  // carries the intent for delegates that do not exist yet).
   property var bouncingIds: []
-  property var launchBounceConsumed: ({})
-  property int launchBounceExpiryMs: 60000
 
   IpcHandler {
     target: "macos.dock"
@@ -146,6 +143,13 @@ Item {
       root.saveSettings()
     }
     function getAutoHide(): bool { return root.autoHide }
+    // DEBUG (temporary): trigger a bounce on demand without launching.
+    function bounceDebug(id: string): void {
+      root.triggerLaunchBounce(id)
+    }
+    function bounceState(): string {
+      return JSON.stringify({ bouncing: root.bouncingIds })
+    }
   }
 
   function saveSettings() {
@@ -373,14 +377,12 @@ Item {
         root.dockItems = root.dockOrder.slice()
     }
     root.applyLayout()
-    // Launch bounce: any NOT RUNNING -> RUNNING transition bounces once.
-    // Optimistic Dock clicks already bounced and marked the launch consumed,
-    // so the late transition is swallowed instead of bouncing a second time.
-    // External launches have no consumed mark and bounce here.
+    // Launch bounce: any NOT RUNNING -> RUNNING transition bounces once,
+    // exactly when the app opens. Dock clicks, external launches and
+    // newly appearing apps all funnel through here.
     for (var i = 0; i < nextRunning.length; i++) {
       var rid = nextRunning[i]
       if (prevRunning.indexOf(rid) !== -1) continue
-      if (root.takeConsumedLaunch(rid)) continue
       root.triggerLaunchBounce(rid)
     }
   }
@@ -421,32 +423,9 @@ Item {
   }
 
   // ---- Launch bounce (macOS "animate opening applications") ----------------
-  // One user launch = one fixed one-shot bounce. The animation always runs to
-  // completion; `running` is only the launch detector, never a stop signal.
-  function consumeLaunchBounce(id) {
-    if (!id) return
-    root.launchBounceConsumed[id] = Date.now()
-  }
-  // Returns true when a NOT RUNNING -> RUNNING transition was already covered
-  // by an optimistic Dock click bounce. Expired entries are treated as absent
-  // so failed launches eventually release their guard.
-  function takeConsumedLaunch(id) {
-    if (!id || !root.launchBounceConsumed[id]) return false
-    var age = Date.now() - root.launchBounceConsumed[id]
-    delete root.launchBounceConsumed[id]
-    return age <= root.launchBounceExpiryMs
-  }
-  function sweepLaunchBounceConsumed() {
-    var now = Date.now()
-    var swept = false
-    for (var id in root.launchBounceConsumed) {
-      if (now - root.launchBounceConsumed[id] > root.launchBounceExpiryMs) {
-        delete root.launchBounceConsumed[id]
-        swept = true
-      }
-    }
-    if (swept) root.launchBounceConsumedChanged()
-  }
+  // One launch = one fixed one-shot bounce, starting when the app actually
+  // opens (NOT RUNNING -> RUNNING). The animation always runs to completion;
+  // `running` is only the launch detector, never a stop signal.
   function triggerLaunchBounce(id) {
     if (!id || id === "__phantom__") return
     if (id === root.floatingId) return
@@ -456,7 +435,8 @@ Item {
       root.bouncingIds = root.bouncingIds.concat([id])
       // playBounce returns false when gated (animation disabled / dragging);
       // drop the guard immediately so it cannot leak without a finish signal.
-      if (!d.playBounce()) root.finishLaunchBounce(id)
+      var started = d.playBounce()
+      if (!started) root.finishLaunchBounce(id)
     } else if (!d) {
       // Delegate does not exist yet (newly appearing app): record the intent
       // and Component.onCompleted auto-plays on creation.
@@ -566,12 +546,9 @@ Item {
       } catch (error) {}
     }
     var entry = DockModel.entryFor(item.id, root.appEntries)
-    // Optimistic launch bounce: the app is not running, so bounce immediately
-    // (no artificial delay) and mark the launch consumed. When the app later
-    // appears in runningIds, refreshItems() swallows that transition instead
-    // of bouncing a second time. The animation always runs to completion.
-    root.consumeLaunchBounce(item.id)
-    root.triggerLaunchBounce(item.id)
+    // The launch bounce fires when the app actually opens (NOT RUNNING ->
+    // RUNNING in refreshItems), not here — so the motion coincides with the
+    // app appearing, like the native Dock.
     if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
       root.shell.appLibrary.launch(item.id, entry.name || item.name)
   }
@@ -1794,16 +1771,6 @@ Item {
       root.ghostOpacity = 1
       root.ghostScale = 1.18
     }
-  }
-
-  // Launch-bounce consumed guard expiry: a failed launch (never becomes
-  // running) must not suppress a future launch bounce permanently.
-  Timer {
-    id: launchBounceExpiryTimer
-    interval: 30000
-    running: true
-    repeat: true
-    onTriggered: root.sweepLaunchBounceConsumed()
   }
 
   // Hover-to-preview lives in its own overlay layer window so it can extend
