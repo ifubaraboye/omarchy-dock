@@ -195,6 +195,75 @@ stored in `~/.config/omarchy/icons/` and `~/.config/omarchy/dock-icons.json`.
 Changes are watched and applied without restarting the shell. The helper is installed at
 `~/.local/bin/omarchy-dock-icon`.
 
+## Configuration
+
+The dock keeps all of its state under `~/.config/omarchy/`. Only `autoHide` is
+a persisted *setting*; pins, order, and icon overrides are managed through the
+UI or the icon CLI. Timing, sizes, and geometry are baked in and not yet
+user-configurable.
+
+### Settings
+
+| Setting | Type | Default | Stored in | Description |
+|---|---|---|---|---|
+| `autoHide` | bool | `true` | `dock-settings.json` | Glide off-screen when idle and reveal from the bottom edge. When off, the dock reserves its footprint as an exclusive zone. |
+| `pinned` | string[] | `[]` | `dock-pinned-macos.json` | App ids pinned to the dock (persists via Pin/Unpin). |
+| `order` | string[] | `[]` | `dock-pinned-macos.json` | Full spatial order of dock items (pinned + running). |
+| custom icon mappings | object | `{}` | `dock-icons.json` | Per-app-id icon override (`file`, `source`, `imageUrl`). Managed via "Get Info…", "Manage Icons…", or `omarchy-dock-icon`. |
+
+### IPC commands
+
+All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
+
+| Command | Args | Description |
+|---|---|---|
+| `toggle` | — | Show/hide the dock |
+| `show` | — | Show the dock |
+| `hide` | — | Hide the dock |
+| `toggleAutoHide` | — | Toggle auto-hide (persisted) |
+| `setAutoHide` | `true`/`false` | Set auto-hide explicitly (persisted) |
+| `getAutoHide` | — | Print current auto-hide state |
+| `altTabNext` | — | Next application in the switcher |
+| `altTabPrev` | — | Previous application in the switcher |
+| `altTabCancel` | — | Dismiss the switcher without changing focus |
+
+### Built-in constants (not configurable)
+
+- Timing: 1000ms idle hide delay, 100ms edge-reveal delay, 380ms hide / 280ms
+  show animation, 180ms window-preview delay, 300ms persist debounce
+- Geometry: dock height 101px, bottom margin 8px, icon size 50px, slot width
+  58px, slot spacing 8px, side padding 18px, hover scale 1.36, corner radius 18
+- Edge trigger: bottom 3px of the screen
+
+### Full default config file
+
+`~/.config/omarchy/dock-settings.json`:
+
+```json
+{
+  "version": 1,
+  "autoHide": true
+}
+```
+
+For reference, the companion files with all defaults applied:
+
+`~/.config/omarchy/dock-pinned-macos.json`:
+
+```json
+{
+  "version": 1,
+  "pinned": [],
+  "order": []
+}
+```
+
+`~/.config/omarchy/dock-icons.json`:
+
+```json
+{}
+```
+
 ## Development
 
 ```bash
