@@ -120,6 +120,13 @@ Item {
   // avoids the PanelWindow's output-anchored scene space entirely, so the
   // check is a plain AABB against the surface the input mask hit-tests.
   property bool dragInsideDock: true
+  // macOS-style launch bounce (one-shot, vertical only). Triggered purely by
+  // the NOT RUNNING -> RUNNING transition in refreshItems(), so the bounce
+  // coincides with the app actually opening — never with the click itself.
+  // Transitions are edge-triggered, giving exactly one bounce per launch.
+  // bouncingIds tracks animations currently playing (prevents overlap and
+  // carries the intent for delegates that do not exist yet).
+  property var bouncingIds: []
 
   IpcHandler {
     target: "macos.dock"
@@ -136,6 +143,13 @@ Item {
       root.saveSettings()
     }
     function getAutoHide(): bool { return root.autoHide }
+    // DEBUG (temporary): trigger a bounce on demand without launching.
+    function bounceDebug(id: string): void {
+      root.triggerLaunchBounce(id)
+    }
+    function bounceState(): string {
+      return JSON.stringify({ bouncing: root.bouncingIds })
+    }
   }
 
   function saveSettings() {
@@ -339,7 +353,9 @@ Item {
   }
 
   function refreshItems() {
-    root.runningIds = normalizeRunning()
+    var prevRunning = root.runningIds ? root.runningIds.slice() : []
+    var nextRunning = normalizeRunning()
+    root.runningIds = nextRunning
     // The session order is authoritative: it preserves drag rearrangements of
     // any app (pinned or running) while dropping apps that closed and
     // appending newly opened ones. Pinned apps stay pinned; running apps are
@@ -361,6 +377,14 @@ Item {
         root.dockItems = root.dockOrder.slice()
     }
     root.applyLayout()
+    // Launch bounce: any NOT RUNNING -> RUNNING transition bounces once,
+    // exactly when the app opens. Dock clicks, external launches and
+    // newly appearing apps all funnel through here.
+    for (var i = 0; i < nextRunning.length; i++) {
+      var rid = nextRunning[i]
+      if (prevRunning.indexOf(rid) !== -1) continue
+      root.triggerLaunchBounce(rid)
+    }
   }
 
   // Order-insensitive id-set equality: the model must survive reorders and
@@ -388,7 +412,59 @@ Item {
   }
 
   function registerItem(id, item) { root.delegateById[id] = item }
-  function unregisterItem(id) { delete root.delegateById[id] }
+  function unregisterItem(id) {
+    delete root.delegateById[id]
+    var i = root.bouncingIds.indexOf(id)
+    if (i !== -1) {
+      var next = root.bouncingIds.slice()
+      next.splice(i, 1)
+      root.bouncingIds = next
+    }
+  }
+
+  // ---- Launch bounce (macOS "animate opening applications") ----------------
+  // One launch = one fixed one-shot bounce, starting when the app actually
+  // opens (NOT RUNNING -> RUNNING). The animation always runs to completion;
+  // `running` is only the launch detector, never a stop signal.
+  function triggerLaunchBounce(id) {
+    if (!id || id === "__phantom__") return
+    if (id === root.floatingId) return
+    if (root.bouncingIds.indexOf(id) !== -1) return
+    var d = root.delegateById[id]
+    if (d && typeof d.playBounce === "function") {
+      root.bouncingIds = root.bouncingIds.concat([id])
+      // playBounce returns false when gated (animation disabled / dragging);
+      // drop the guard immediately so it cannot leak without a finish signal.
+      var started = d.playBounce()
+      if (!started) root.finishLaunchBounce(id)
+    } else if (!d) {
+      // Delegate does not exist yet (newly appearing app): record the intent
+      // and Component.onCompleted auto-plays on creation.
+      root.bouncingIds = root.bouncingIds.concat([id])
+    }
+  }
+  function finishLaunchBounce(id) {
+    var i = root.bouncingIds.indexOf(id)
+    if (i !== -1) {
+      var next = root.bouncingIds.slice()
+      next.splice(i, 1)
+      root.bouncingIds = next
+    }
+    var d = root.delegateById[id]
+    if (d) d.bounceOffset = 0
+  }
+  function cancelLaunchBounce(id) {
+    if (!id) return
+    var d = root.delegateById[id]
+    if (d && typeof d.cancelBounce === "function") d.cancelBounce()
+    else if (d) d.bounceOffset = 0
+    var i = root.bouncingIds.indexOf(id)
+    if (i !== -1) {
+      var next = root.bouncingIds.slice()
+      next.splice(i, 1)
+      root.bouncingIds = next
+    }
+  }
 
   // Live metadata for a dock id, mirrored from the observable root state so a
   // delegate's itemData updates in place instead of the Repeater rebuilding.
@@ -470,6 +546,9 @@ Item {
       } catch (error) {}
     }
     var entry = DockModel.entryFor(item.id, root.appEntries)
+    // The launch bounce fires when the app actually opens (NOT RUNNING ->
+    // RUNNING in refreshItems), not here — so the motion coincides with the
+    // app appearing, like the native Dock.
     if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
       root.shell.appLibrary.launch(item.id, entry.name || item.name)
   }
@@ -725,6 +804,9 @@ Item {
       root.ghostOpacity = 1
       root.tooltipVisible = false
       root.tooltipItem = null
+      // Dragging takes priority over the launch bounce: cancel any active
+      // bounce so no stale vertical offset survives the drag.
+      root.cancelLaunchBounce(item.id)
     }
     root.hoveredMouseX = position.x
     root.hidePreview()
@@ -1457,6 +1539,9 @@ Item {
             property alias targetScale: dockItem.targetScale
             property alias targetLift: dockItem.targetLift
             property alias targetOpacity: dockItem.targetOpacity
+            property alias bounceOffset: dockItem.bounceOffset
+            function playBounce() { return dockItem.playLaunchBounce() }
+            function cancelBounce() { dockItem.cancelLaunchBounce() }
 
             Behavior on x {
               enabled: wrapper.animating
@@ -1471,6 +1556,10 @@ Item {
               targetLift = seed.lift
               targetOpacity = (modelData === root.floatingId) ? 0 : 1
               animating = true
+              // Newly appearing launched app: the bounce intent was recorded
+              // before this delegate existed; play it now that animation is on.
+              if (root.bouncingIds.indexOf(modelData) !== -1 && !dockItem.playLaunchBounce())
+                root.finishLaunchBounce(modelData)
             }
             Component.onDestruction: {
               root.visualCache[modelData] = { x: x, scale: targetScale, lift: targetLift }
@@ -1486,6 +1575,7 @@ Item {
               iconSourceOverride: root.iconSourceFor(modelData)
               onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
               onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+              onLaunchBounceFinished: root.finishLaunchBounce(modelData)
               onDragMoved: function(draggedItem, position) {
                 root.onDragMoved(draggedItem,
                   dockItem.mapToItem(null, position.x, position.y),
