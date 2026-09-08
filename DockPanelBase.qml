@@ -193,8 +193,8 @@ Item {
   }
 
   onDockSideChanged: {
-    // Re-layout for the new axis, drop any hover preview (which is a
-    // bottom-only feature) and persist the choice.
+    // Re-layout for the new axis, drop any hover preview (its anchor is
+    // side-dependent) and persist the choice.
     root.hidePreview()
     root.clearHover()
     root.applyLayout()
@@ -974,9 +974,6 @@ Item {
   // Preview controller ------------------------------------------------------
   function onItemHoverChanged(item, isVisible, centerX) {
     if (!item || item.separator) return
-    // Window previews sit above the dock and are a bottom-dock feature; side
-    // docks show tooltips only.
-    if (root.vertical) return
     if (isVisible) {
       root.previewCenterX = centerX
       if (root.floatingId || root.menuOpen || root.pickerOpen || !root.enabled) return
@@ -1254,7 +1251,7 @@ Item {
     id: previewDelay
     interval: 180
     onTriggered: {
-      if (!root.previewAppId || root.floatingId || root.menuOpen || root.pickerOpen || !root.enabled || root.vertical) return
+      if (!root.previewAppId || root.floatingId || root.menuOpen || root.pickerOpen || !root.enabled) return
       var wins = root.gatherWindowsForApp(root.previewAppId)
       if (!wins.length) return
       root.previewWindows = wins
@@ -1842,10 +1839,15 @@ Item {
   // far above the dock surface without touching the dock's layout or model.
   WindowPreviewPanel {
     id: previewPanel
-    previewVisible: root.previewVisible && !root.floatingId && !root.menuOpen && !root.vertical
+    previewVisible: root.previewVisible && !root.floatingId && !root.menuOpen
     windowList: root.previewWindows
     centerX: root.previewCenterX
     bottomY: root.previewBottomY
+    dockSide: root.dockSide
+    dockX: root.surfaceX
+    dockY: root.surfaceY
+    dockW: root.surfaceWidth
+    dockH: root.surfaceHeight
     iconSourceFor: function(data) { return root.iconSourceFor({ id: root.previewAppId }) }
     thumbnailFor: function(data) { return root.thumbnailFor(data) }
     onActivated: function(data) { root.activatePreviewWindow(data) }

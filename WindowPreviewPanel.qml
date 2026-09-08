@@ -12,8 +12,15 @@ PanelWindow {
 
   property bool previewVisible: false
   property var windowList: []
+  // centerX holds the along-dock coordinate: screen-X for bottom docks,
+  // screen-Y for left/right docks (mirrors DockPanelBase previewCenterX).
   property real centerX: 0
   property real bottomY: 0
+  property string dockSide: "bottom"
+  property real dockX: 0
+  property real dockY: 0
+  property real dockW: 0
+  property real dockH: 0
   property var iconSourceFor: function(item) { return "" }
   property var thumbnailFor: function(item) { return "" }
   property Component cardComponent: Qt.createComponent("WindowPreview.qml")
@@ -62,11 +69,22 @@ PanelWindow {
 
   Item {
     id: previewRow
-    x: Math.max(8, Math.min(root.centerX - width / 2, parent.width - width - 8))
+    // Bottom dock: cards sit above the dock, centered on the hovered icon.
+    // Left dock: cards sit to the right of the dock surface.
+    // Right dock: cards sit to the left of the dock surface.
+    // For side docks centerX carries the screen-Y of the hovered icon.
+    x: {
+      if (root.dockSide === "left") return Math.max(8, Math.min(root.dockX + root.dockW + 8, parent.width - width - 8))
+      if (root.dockSide === "right") return Math.max(8, Math.min(root.dockX - width - 8, parent.width - width - 8))
+      return Math.max(8, Math.min(root.centerX - width / 2, parent.width - width - 8))
+    }
     // DockPanel supplies the exact dock surface Y once its preview state is
     // committed. While the first frame is arriving, use the known bottom
     // dock geometry so the panel is already in the correct place.
-    y: Math.max(8, (root.bottomY > 0 ? root.bottomY : parent.height - 123) - height - 6)
+    y: {
+      if (root.dockSide !== "bottom") return Math.max(8, Math.min(root.centerX - height / 2, parent.height - height - 8))
+      return Math.max(8, (root.bottomY > 0 ? root.bottomY : parent.height - 123) - height - 6)
+    }
     width: row.implicitWidth
     height: row.implicitHeight
     opacity: root.panelActive ? 1 : 0
