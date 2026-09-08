@@ -30,8 +30,8 @@ Item {
   signal dragFinished(var itemData, point position)
   signal itemLeftClicked(var itemData)
   signal itemRightClicked(var itemData, point position)
-  signal tooltipRequested(var itemData, bool visible, real centerX)
-  signal hoverPointerChanged(var itemData, bool inside, real pointerX)
+  signal tooltipRequested(var itemData, bool visible, point center)
+  signal hoverPointerChanged(var itemData, bool inside, point position)
 
   width: iconSize + 8
   height: iconSize + 18
@@ -137,13 +137,13 @@ Item {
 
     onEntered: {
       root.tooltipVisible = true
-      root.tooltipRequested(root.itemData, true, root.mapToItem(null, root.width / 2, 0).x)
-      root.hoverPointerChanged(root.itemData, true, root.mapToItem(null, mouseX, mouseY).x)
+      root.tooltipRequested(root.itemData, true, root.mapToItem(null, root.width / 2, root.height / 2))
+      root.hoverPointerChanged(root.itemData, true, root.mapToItem(null, mouseX, mouseY))
     }
     onExited: {
       root.tooltipVisible = false
-      root.tooltipRequested(root.itemData, false, root.mapToItem(null, root.width / 2, 0).x)
-      root.hoverPointerChanged(root.itemData, false, root.mapToItem(null, mouseX, mouseY).x)
+      root.tooltipRequested(root.itemData, false, root.mapToItem(null, root.width / 2, root.height / 2))
+      root.hoverPointerChanged(root.itemData, false, root.mapToItem(null, mouseX, mouseY))
     }
     onPressed: function(mouse) {
       root.leftPressed = mouse.button === Qt.LeftButton
@@ -151,7 +151,7 @@ Item {
     }
     onPositionChanged: {
       if (!pressed) {
-        root.hoverPointerChanged(root.itemData, true, root.mapToItem(null, mouseX, mouseY).x)
+        root.hoverPointerChanged(root.itemData, true, root.mapToItem(null, mouseX, mouseY))
         return
       }
       if (root.leftPressed && !root.isDragging && Math.hypot(mouseX - root.pressPosition.x, mouseY - root.pressPosition.y) >= 6)

@@ -17,9 +17,7 @@ Item {
   property string iconDir: home + "/.config/omarchy/icons"
   property string iconMapPath: home + "/.config/omarchy/dock-icons.json"
   property string pinPath: home + "/.config/omarchy/dock-pinned-macos.json"
-  property string tempPinPath: pinPath + ".tmp"
   property string settingsPath: home + "/.config/omarchy/dock-settings.json"
-  property string tempSettingsPath: settingsPath + ".tmp"
   property var pinnedIds: []
   property var dockOrder: []
   property bool pinFileLoaded: false
@@ -52,6 +50,9 @@ Item {
   property bool dockReady: false
   // macOS-style auto-hide. Enabled by default; persisted in dock-settings.json.
   property bool autoHide: true
+  // Dock placement: "bottom" | "left" | "right". Persisted in dock-settings.json.
+  property string dockSide: "bottom"
+  property bool vertical: root.dockSide !== "bottom"
   // Tuning for the macOS glide — not too fast, not sluggish.
   property int hideDelay: 1000
   property int showDelay: 100
@@ -72,6 +73,22 @@ Item {
   property bool autoHidden: false
   property int dockHeight: 101
   property int bottomMargin: 8
+  // Dock geometry is computed in screen coordinates (dockWindow fills the
+  // screen) instead of conditional anchors. Switching sides cannot leave a
+  // stale anchor competing with a new one, which otherwise pinned the dock to
+  // top-center and inflated the edge hot-zone to full screen.
+  property real hideShift: (root.autoHide && root.autoHidden) ? root.bottomMargin + root.dockHeight - root.peekPx : 0
+  property real surfaceWidth: root.vertical ? root.dockHeight : root.layoutWidth
+  property real surfaceHeight: root.vertical ? root.layoutWidth : root.dockHeight
+  property real surfaceX: {
+    if (root.dockSide === "left") return root.bottomMargin - root.hideShift
+    if (root.dockSide === "right") return dockWindow.width - root.surfaceWidth - root.bottomMargin + root.hideShift
+    return (dockWindow.width - root.surfaceWidth) / 2
+  }
+  property real surfaceY: {
+    if (root.dockSide === "bottom") return dockWindow.height - root.surfaceHeight - root.bottomMargin + root.hideShift
+    return (dockWindow.height - root.surfaceHeight) / 2
+  }
   property int iconSize: 50
   property real hoveredMouseX: -1
   property string hoveredItemId: ""
@@ -143,6 +160,18 @@ Item {
       root.saveSettings()
     }
     function getAutoHide(): bool { return root.autoHide }
+    function setDockSide(value: string): void {
+      var side = DockModel.normalizeSide(value)
+      if (side === root.dockSide) return
+      root.dockSide = side
+    }
+    function getDockSide(): string { return root.dockSide }
+    function cycleDockSide(): string {
+      var order = ["bottom", "left", "right"]
+      var idx = order.indexOf(root.dockSide)
+      root.dockSide = order[(idx + 1) % order.length]
+      return root.dockSide
+    }
     // DEBUG (temporary): trigger a bounce on demand without launching.
     function bounceDebug(id: string): void {
       root.triggerLaunchBounce(id)
@@ -153,12 +182,23 @@ Item {
   }
 
   function saveSettings() {
-    var content = DockModel.serializeSettings({ autoHide: root.autoHide })
+    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
-    settingsWriter.path = root.tempSettingsPath
-    settingsWriter.setText(content)
-    Qt.callLater(function() { settingsRenameProcess.running = true })
+    // settingsFile uses atomicWrites: setText writes to a sibling temp and
+    // renames it into place itself, so no separate mv Process is needed (the
+    // old manual .tmp + Process dance never completed the rename, leaving the
+    // on-disk file stale and snapping the dock back to bottom/center on reload).
+    settingsFile.setText(content)
+  }
+
+  onDockSideChanged: {
+    // Re-layout for the new axis, drop any hover preview (which is a
+    // bottom-only feature) and persist the choice.
+    root.hidePreview()
+    root.clearHover()
+    root.applyLayout()
+    root.saveSettings()
   }
 
   // Central helper: build the state snapshot consumed by the pure helpers.
@@ -176,7 +216,8 @@ Item {
   }
 
   function maybeScheduleHide() {
-    if (DockModel.shouldScheduleHide(hideState())) hideTimer.restart()
+    var ok = DockModel.shouldScheduleHide(hideState())
+    if (ok) hideTimer.restart()
   }
 
   onAutoHideChanged: {
@@ -399,6 +440,10 @@ Item {
 
   function cursorXInRow() {
     if (root.hoveredMouseX < 0) return -1
+    // dockRow is rotated -90° for left/right docks, so hoveredMouseX (the
+    // window coordinate along the dock) must be fed into the matching slot
+    // for mapFromItem to resolve it to the row's x axis.
+    if (root.vertical) return dockRow.mapFromItem(null, 0, root.hoveredMouseX).x
     return dockRow.mapFromItem(null, root.hoveredMouseX, 0).x
   }
 
@@ -723,9 +768,10 @@ Item {
     var content = DockModel.serializePinned(root.pinnedIds, root.dockOrder)
     root.ownWriteUntil = Date.now() + 2000
     DockModel.markWritten(content)
-    tempWriter.path = root.tempPinPath
-    tempWriter.setText(content)
-    Qt.callLater(function() { renameProcess.running = true })
+    // pinFile uses atomicWrites, so setText renames a sibling temp into place
+    // itself; the previous manual .tmp + mv Process never completed.
+    pinFile.setText(content)
+    root.refreshItems()
   }
 
   function openMenu(item, position) {
@@ -741,6 +787,11 @@ Item {
     if (action === "toggleAutoHide") {
       root.autoHide = !root.autoHide
       root.saveSettings()
+      return
+    }
+    if (action === "setSideBottom" || action === "setSideLeft" || action === "setSideRight") {
+      var newSide = action.slice(7).toLowerCase()
+      root.dockSide = newSide
       return
     }
     // Special items: Downloads / Trash — treat menu actions as folder actions
@@ -808,13 +859,14 @@ Item {
       // bounce so no stale vertical offset survives the drag.
       root.cancelLaunchBounce(item.id)
     }
-    root.hoveredMouseX = position.x
+    root.hoveredMouseX = root.vertical ? position.y : position.x
     root.hidePreview()
     root.dragInsideDock =
       surfacePosition.x >= 0 && surfacePosition.x <= dockSurface.width &&
       surfacePosition.y >= 0 && surfacePosition.y <= dockSurface.height
-    root.ghostX = position.x - root.iconSize * root.ghostScale / 2
-    root.ghostY = position.y - root.iconSize * root.ghostScale / 2 - 30
+    var half = root.iconSize * root.ghostScale / 2
+    root.ghostX = position.x - half + (root.vertical ? (root.dockSide === "left" ? 30 : -30) : 0)
+    root.ghostY = position.y - half - (root.vertical ? 0 : 30)
     root.applyLayout()
   }
 
@@ -922,6 +974,9 @@ Item {
   // Preview controller ------------------------------------------------------
   function onItemHoverChanged(item, isVisible, centerX) {
     if (!item || item.separator) return
+    // Window previews sit above the dock and are a bottom-dock feature; side
+    // docks show tooltips only.
+    if (root.vertical) return
     if (isVisible) {
       root.previewCenterX = centerX
       if (root.floatingId || root.menuOpen || root.pickerOpen || !root.enabled) return
@@ -1199,7 +1254,7 @@ Item {
     id: previewDelay
     interval: 180
     onTriggered: {
-      if (!root.previewAppId || root.floatingId || root.menuOpen || root.pickerOpen || !root.enabled) return
+      if (!root.previewAppId || root.floatingId || root.menuOpen || root.pickerOpen || !root.enabled || root.vertical) return
       var wins = root.gatherWindowsForApp(root.previewAppId)
       if (!wins.length) return
       root.previewWindows = wins
@@ -1233,6 +1288,7 @@ Item {
     id: pinFile
     path: root.pinPath
     watchChanges: true
+    atomicWrites: true
     printErrors: false
     onLoaded: {
       if (!root.pinFileLoaded) {
@@ -1261,24 +1317,13 @@ Item {
   }
 
   FileView {
-    id: tempWriter
-    watchChanges: false
-    printErrors: false
-  }
-
-  FileView {
-    id: settingsWriter
-    watchChanges: false
-    printErrors: false
-  }
-
-  FileView {
     id: settingsFile
     path: root.settingsPath
     watchChanges: true
+    atomicWrites: true
     printErrors: false
     onLoaded: {
-      var parsed = DockModel.parseSettings(text(), { autoHide: true })
+      var parsed = DockModel.parseSettings(text(), { autoHide: true, dockSide: "bottom" })
       if (!root.settingsLoaded) {
         root.settingsLoaded = true
         root.autoHide = parsed.autoHide
@@ -1286,6 +1331,7 @@ Item {
         if (!DockModel.shouldReprocessSettings(text())) return
         root.autoHide = parsed.autoHide
       }
+      if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
     }
@@ -1296,18 +1342,8 @@ Item {
     onLoadFailed: {
       root.settingsLoaded = true
       root.autoHide = true
+      root.dockSide = "bottom"
     }
-  }
-
-  Process {
-    id: renameProcess
-    command: ["mv", root.tempPinPath, root.pinPath]
-    onExited: root.refreshItems()
-  }
-
-  Process {
-    id: settingsRenameProcess
-    command: ["mv", root.tempSettingsPath, root.settingsPath]
   }
 
   Component {
@@ -1477,11 +1513,10 @@ Item {
 
     Rectangle {
       id: dockSurface
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.bottom: parent.bottom
-      anchors.bottomMargin: root.autoHide && root.autoHidden ? -root.dockHeight + root.peekPx : root.bottomMargin
-      width: root.layoutWidth
-      height: root.dockHeight
+      x: root.surfaceX
+      y: root.surfaceY
+      width: root.surfaceWidth
+      height: root.surfaceHeight
       radius: 18
       color: Util.alpha(Color.background, 0.50)
       border.color: Util.alpha(Color.foreground, 0.04)
@@ -1493,11 +1528,17 @@ Item {
       // glass pill instead of a brighter top. Removed the previous 0.10 bar
       // that made the top brighter than left/right/bottom.
 
+      Behavior on x {
+        NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+      }
+      Behavior on y {
+        NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+      }
       Behavior on width {
         NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
       }
-      Behavior on anchors.bottomMargin {
-        NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+      Behavior on height {
+        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
       }
       Behavior on opacity { NumberAnimation { duration: 180 } }
 
@@ -1507,8 +1548,15 @@ Item {
         anchors.verticalCenterOffset: 6
         width: root.layoutWidth - 2 * root.sidePadding
         height: 70
+        // Left/right docks reuse the horizontal layout engine: the row is
+        // rotated -90° so the x-axis becomes screen-y (first item on top) and
+        // each wrapper counter-rotates +90° to keep icons upright.
+        rotation: root.vertical ? -90 : 0
 
         Behavior on width {
+          NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+        }
+        Behavior on rotation {
           NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
         }
 
@@ -1523,6 +1571,7 @@ Item {
             width: root.slotWidth * targetScale
             height: 70
             x: 0
+            rotation: root.vertical ? 90 : 0
             property bool animating: false
 
             // Live metadata mirrored from observable root state so a pin or
@@ -1584,16 +1633,16 @@ Item {
               onDragFinished: function(draggedItem, position) {
                 root.finishDrag(draggedItem, dockItem.mapToItem(dockSurface, position.x, position.y))
               }
-              onTooltipRequested: function(hoveredItem, isVisible, centerX) {
-                root.tooltipCenterX = centerX
-                root.onItemHoverChanged(hoveredItem, isVisible, centerX)
+              onTooltipRequested: function(hoveredItem, isVisible, center) {
+                root.tooltipCenterX = root.vertical ? center.y : center.x
+                root.onItemHoverChanged(hoveredItem, isVisible, root.tooltipCenterX)
                 root.showTooltip(hoveredItem, isVisible)
               }
-              onHoverPointerChanged: function(hoveredItem, isInside, pointerX) {
+              onHoverPointerChanged: function(hoveredItem, isInside, position) {
                 if (isInside) {
                   root.hoveredItemId = hoveredItem.id
-                  root.hoveredMouseX = pointerX
-                  root.tooltipCenterX = pointerX
+                  root.hoveredMouseX = root.vertical ? position.y : position.x
+                  root.tooltipCenterX = root.vertical ? position.y : position.x
                 } else if (!root.floatingId && root.hoveredItemId === hoveredItem.id) {
                   root.hoveredItemId = ""
                 }
@@ -1612,10 +1661,11 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         hoverEnabled: true
         onExited: {
-          root.clearHover()
+          root.maybeScheduleHide()
         }
         onPositionChanged: {
-          root.hoveredMouseX = mouseArea.mapToItem(null, mouseX, mouseY).x
+          var hoverPoint = mouseArea.mapToItem(null, mouseX, mouseY)
+          root.hoveredMouseX = root.vertical ? hoverPoint.y : hoverPoint.x
           root.applyLayout()
         }
         onClicked: function(mouse) {
@@ -1627,8 +1677,15 @@ Item {
     Rectangle {
       visible: root.tooltipVisible && root.tooltipItem !== null
       z: 20
-      x: Math.max(12, Math.min(root.tooltipCenterX - width / 2, parent.width - width - 12))
-      y: dockSurface.y - height - 8
+      x: {
+        if (root.vertical && root.dockSide === "left") return dockSurface.x + dockSurface.width + 8
+        if (root.vertical) return dockSurface.x - width - 8
+        return Math.max(12, Math.min(root.tooltipCenterX - width / 2, parent.width - width - 12))
+      }
+      y: {
+        if (!root.vertical) return dockSurface.y - height - 8
+        return Math.max(12, Math.min(root.tooltipCenterX - height / 2, parent.height - height - 12))
+      }
       width: tooltipText.implicitWidth + 20
       height: 24
       radius: 8
@@ -1646,9 +1703,12 @@ Item {
       }
       // Subtle stem pointing toward the dock icon.
       Rectangle {
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: parent.bottom
-        anchors.topMargin: -5
+        x: {
+          if (root.vertical && root.dockSide === "left") return -4
+          if (root.vertical && root.dockSide === "right") return parent.width - 4
+          return (parent.width - 8) / 2
+        }
+        y: root.vertical ? (parent.height - 8) / 2 : parent.height - 5
         width: 8
         height: 8
         radius: 1
@@ -1660,8 +1720,10 @@ Item {
     }
 
     MouseArea {
-      anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-      height: 18
+      x: root.vertical ? (root.dockSide === "left" ? 0 : parent.width - 18) : 0
+      y: root.vertical ? 0 : parent.height - 18
+      width: root.vertical ? 18 : parent.width
+      height: root.vertical ? parent.height : 18
       hoverEnabled: true
       // Hover here is already covered by the full dockSurface mouseArea
       // (containsMouse) and by icon hover (hoveredItemId). No manual
@@ -1692,6 +1754,7 @@ Item {
   DockMenu {
     id: dockMenu
     autoHideEnabled: root.autoHide
+    dockSide: root.dockSide
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false
   }
@@ -1702,7 +1765,9 @@ Item {
     customIcons: root.customIcons
     iconSourceFor: function(id) { return root.iconSourceFor(id) }
     helperPath: root.helperPath
-    onOpenChanged: if (!open) root.pickerOpen = false
+    onOpenChanged: {
+      if (!open) root.pickerOpen = false
+    }
   }
 
   // Resolve the icon helper: prefer the documented install location, fall
@@ -1777,7 +1842,7 @@ Item {
   // far above the dock surface without touching the dock's layout or model.
   WindowPreviewPanel {
     id: previewPanel
-    previewVisible: root.previewVisible && !root.floatingId && !root.menuOpen
+    previewVisible: root.previewVisible && !root.floatingId && !root.menuOpen && !root.vertical
     windowList: root.previewWindows
     centerX: root.previewCenterX
     bottomY: root.previewBottomY
@@ -1811,8 +1876,17 @@ Item {
     WlrLayershell.layer: WlrLayer.Background
     WlrLayershell.namespace: "macos-dock-spacer"
     WlrLayershell.exclusiveZone: root.autoHide ? 0 : (root.enabled ? root.dockHeight + root.bottomMargin : 0)
-    anchors { bottom: true; left: true; right: true }
-    implicitHeight: root.dockHeight + root.bottomMargin
+    // The exclusive zone is edge-anchored so tiled windows avoid the dock
+    // footprint on whichever side the dock currently lives. Anchors are
+    // assigned plain booleans (never undefined), so each side commits a
+    // complete, non-conflicting anchor set that reliably detaches the
+    // previous one. PanelWindow has no state machine, so no states here.
+    anchors.top: root.dockSide !== "bottom"
+    anchors.bottom: true
+    anchors.left: root.dockSide !== "right"
+    anchors.right: root.dockSide === "right"
+    implicitWidth: root.dockSide === "bottom" ? 0 : root.dockHeight + root.bottomMargin
+    implicitHeight: root.dockSide === "bottom" ? root.dockHeight + root.bottomMargin : 0
     mask: Region {}
   }
 
@@ -1830,13 +1904,21 @@ Item {
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "macos-dock-edge"
-    anchors { bottom: true; left: true; right: true }
-    implicitHeight: root.edgeHeight
+    // Full-screen surface on every side; input is limited to the mask below,
+    // exactly like dockWindow, so the hot-zone can never balloon into a
+    // full-screen input grab (the previous conditional-undefined anchors did).
+    anchors.top: true
+    anchors.bottom: true
+    anchors.left: true
+    anchors.right: true
     mask: Region { item: edgeMouse }
 
     Item {
       id: edgeMouse
-      anchors.fill: parent
+      x: root.dockSide === "bottom" ? 0 : (root.dockSide === "left" ? 0 : parent.width - root.edgeHeight)
+      y: root.dockSide === "bottom" ? parent.height - root.edgeHeight : 0
+      width: root.dockSide === "bottom" ? parent.width : root.edgeHeight
+      height: root.dockSide === "bottom" ? root.edgeHeight : parent.height
       MouseArea {
         anchors.fill: parent
         hoverEnabled: true

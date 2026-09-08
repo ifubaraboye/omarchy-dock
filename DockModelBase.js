@@ -316,31 +316,39 @@ function markWritten(content) { lastWrittenHash = hashContent(content) }
 
 function resetWrittenGuard() { lastWrittenHash = null }
 
-// ---- Dock settings (auto-hide etc.) ------------------------------------
+// ---- Dock settings (auto-hide, placement) ------------------------------
 var lastSettingsHash = null
 
+function normalizeSide(side) {
+    var s = String(side || "bottom").toLowerCase()
+    if (s === "left" || s === "right") return s
+    return "bottom"
+}
+
 function parseSettings(text, fallback) {
-    var defaults = fallback || { autoHide: true }
+    var defaults = fallback || { autoHide: true, dockSide: "bottom" }
+    var baseSide = normalizeSide(defaults.dockSide)
+    var base = { autoHide: !!defaults.autoHide, dockSide: baseSide }
     var source = String(text || "").trim()
-    if (!source) return { autoHide: !!defaults.autoHide }
+    if (!source) return base
     try {
         var parsed = JSON.parse(source)
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
-            return { autoHide: !!defaults.autoHide }
-        if (typeof parsed.autoHide === "boolean")
-            return { autoHide: parsed.autoHide }
-        // Legacy: tolerate string "true"/"false"
-        if (typeof parsed.autoHide === "string")
-            return { autoHide: parsed.autoHide === "true" }
-        return { autoHide: !!defaults.autoHide }
+            return base
+        var out = { autoHide: base.autoHide, dockSide: base.dockSide }
+        if (typeof parsed.autoHide === "boolean") out.autoHide = parsed.autoHide
+        else if (typeof parsed.autoHide === "string") out.autoHide = parsed.autoHide === "true"
+        if (parsed.dockSide !== undefined) out.dockSide = normalizeSide(parsed.dockSide)
+        return out
     } catch (error) {
-        return { autoHide: !!defaults.autoHide }
+        return base
     }
 }
 
 function serializeSettings(settings) {
     var value = settings && typeof settings.autoHide === "boolean" ? settings.autoHide : true
-    return JSON.stringify({ version: 1, autoHide: value }, null, 2) + "\n"
+    var side = normalizeSide(settings && settings.dockSide)
+    return JSON.stringify({ version: 1, autoHide: value, dockSide: side }, null, 2) + "\n"
 }
 
 function shouldReprocessSettings(content) {
@@ -401,6 +409,7 @@ if (typeof module !== "undefined" && module.exports) {
         resetWrittenGuard: resetWrittenGuard,
         parseSettings: parseSettings,
         serializeSettings: serializeSettings,
+        normalizeSide: normalizeSide,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,

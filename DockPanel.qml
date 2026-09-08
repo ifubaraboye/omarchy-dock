@@ -43,19 +43,23 @@ Item {
     anchors { top: true; bottom: true; left: true; right: true }
     mask: Region {}
 
+    // Mirror the dock surface's screen-space geometry. The surface follows
+    // numeric x/y/width/height on the base so both layers can never disagree.
     Rectangle {
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.bottom: parent.bottom
-      anchors.bottomMargin: dock.autoHide && dock.autoHidden ? -dock.dockHeight + dock.peekPx : dock.bottomMargin
-      width: dock.layoutWidth
-      height: dock.dockHeight
+      x: dock.surfaceX
+      y: dock.surfaceY
+      width: dock.surfaceWidth
+      height: dock.surfaceHeight
       radius: 18
       color: "transparent"
       border.color: "transparent"
       border.width: 0
       opacity: dock.menuOpen || dock.pickerOpen || dock.dockHovered ? 1 : 0.92
 
-      Behavior on anchors.bottomMargin { NumberAnimation { duration: dock.autoHidden ? dock.hideDuration : dock.showDuration; easing.type: Easing.OutCubic } }
+      Behavior on x { NumberAnimation { duration: dock.autoHidden ? dock.hideDuration : dock.showDuration; easing.type: Easing.OutCubic } }
+      Behavior on y { NumberAnimation { duration: dock.autoHidden ? dock.hideDuration : dock.showDuration; easing.type: Easing.OutCubic } }
+      Behavior on width { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+      Behavior on height { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
       Behavior on opacity { NumberAnimation { duration: 160 } }
     }
   }

@@ -11,6 +11,7 @@ PanelWindow {
   property bool opened: false
   property point requestedPosition: Qt.point(0, 0)
   property bool autoHideEnabled: true
+  property string dockSide: "bottom"
 
   signal actionTriggered(string action, var itemData)
 
@@ -49,7 +50,11 @@ PanelWindow {
           { action: "", label: "", separator: true },
           { action: "manageIcons", label: "Manage Icons", separator: false },
           { action: "", label: "", separator: true },
-          { action: "toggleAutoHide", label: root.autoHideEnabled ? "Turn Hiding Off" : "Turn Hiding On", separator: false }
+          { action: "toggleAutoHide", label: root.autoHideEnabled ? "Turn Hiding Off" : "Turn Hiding On", separator: false },
+          { action: "", label: "", separator: true },
+          { action: "setSideBottom", label: "Position: Bottom", separator: false, side: "bottom" },
+          { action: "setSideLeft", label: "Position: Left", separator: false, side: "left" },
+          { action: "setSideRight", label: "Position: Right", separator: false, side: "right" }
         ]
         delegate: Rectangle {
           required property var modelData
@@ -64,7 +69,9 @@ PanelWindow {
             anchors.fill: parent
             anchors.leftMargin: 10
             verticalAlignment: Text.AlignVCenter
-            text: modelData.label
+            text: modelData.side
+                    ? ((root.dockSide === modelData.side ? "• " : "  ") + modelData.label)
+                    : modelData.label
             color: Color.foreground
             font.family: Style.font.family
             font.pixelSize: Style.font.body
