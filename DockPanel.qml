@@ -34,7 +34,7 @@ Item {
   // not as a generic black panel. The actual icons remain fully interactive.
   PanelWindow {
     id: material
-    visible: dock.enabled && !dock.conflictDetected
+    visible: dock.enabled && !dock.conflictDetected && !dock.remapping && Quickshell.screens.length > 0
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore

@@ -48,6 +48,44 @@ Item {
   property bool pickerOpen: false
   property bool enabled: true
   property bool dockReady: false
+  // Layer-shell remap pulse. When Hyprland destroys our outputs (suspend,
+  // DPMS off, cable disconnect) the compositor closes our layer surfaces, but
+  // static PanelWindows with unchanged `visible == true` are never re-mapped
+  // onto the new wl_output. Pulsing `remapping` false->true->false forces a
+  // visible transition so Quickshell re-creates the surfaces (see #13).
+  property bool remapping: false
+
+  Timer {
+    id: remapSettleTimer
+    interval: 250
+    onTriggered: {
+      root.remapping = true
+      remapUnmapTimer.restart()
+    }
+  }
+
+  Timer {
+    id: remapUnmapTimer
+    interval: 100
+    onTriggered: {
+      root.remapping = false
+    }
+  }
+
+  function triggerRemap(manual) {
+    // Skip automatic pulses during startup (screensChanged fires before the
+    // dock is ready and would only cause a boot flicker). Manual IPC remaps
+    // always run.
+    if (!manual && !root.dockReady) return
+    remapSettleTimer.restart()
+  }
+
+  Connections {
+    target: Quickshell
+    function onScreensChanged() {
+      root.triggerRemap(false)
+    }
+  }
   // macOS-style auto-hide. Enabled by default; persisted in dock-settings.json.
   property bool autoHide: true
   // Dock placement: "bottom" | "left" | "right". Persisted in dock-settings.json.
@@ -160,6 +198,10 @@ Item {
       root.saveSettings()
     }
     function getAutoHide(): bool { return root.autoHide }
+    function remap(): string {
+      root.triggerRemap(true)
+      return "ok"
+    }
     function setDockSide(value: string): void {
       var side = DockModel.normalizeSide(value)
       if (side === root.dockSide) return
@@ -1397,6 +1439,17 @@ Item {
   }
   Connections {
     target: Hyprland
+    function onRawEvent(event) {
+      // Hyprland emits monitoradded(v2)/monitorremoved(v2) when outputs
+      // appear or disappear (replug, DPMS, suspend/resume). Re-map our
+      // layer surfaces onto the new output (see #13).
+      if (!event || !event.name) return
+      var name = String(event.name)
+      if (name === "monitoradded" || name === "monitoraddedv2"
+          || name === "monitorremoved" || name === "monitorremovedv2") {
+        root.triggerRemap(false)
+      }
+    }
     function onActiveToplevelChanged() {
       // Keep the Alt+Tab MRU list in sync with focus changes. The switcher
       // only tracks apps the dock knows about.
@@ -1499,7 +1552,7 @@ Item {
 
   PanelWindow {
     id: dockWindow
-    visible: !root.conflictDetected && root.enabled
+    visible: !root.conflictDetected && root.enabled && !root.remapping && Quickshell.screens.length > 0
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
@@ -1871,7 +1924,7 @@ Item {
   // hidden the spacer unmaps and tiled windows reclaim the space.
   PanelWindow {
     id: dockSpacerWindow
-    visible: !root.conflictDetected && root.enabled && !root.autoHide
+    visible: !root.conflictDetected && root.enabled && !root.autoHide && !root.remapping && Quickshell.screens.length > 0
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
@@ -1900,7 +1953,7 @@ Item {
   // the dock, and edgeHovered participates in hide suppression like dockHovered.
   PanelWindow {
     id: edgeHotZone
-    visible: !root.conflictDetected && root.enabled && root.autoHide && root.dockReady
+    visible: !root.conflictDetected && root.enabled && root.autoHide && root.dockReady && !root.remapping && Quickshell.screens.length > 0
     screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
