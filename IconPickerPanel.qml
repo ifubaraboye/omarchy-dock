@@ -145,18 +145,37 @@ PanelWindow {
   }
 
   function reloadApps() {
-    if (!root.shell || !root.shell.appLibrary) {
-      root.appRows = []
+    if (root.shell && root.shell.appLibrary) {
+      try {
+        var rows = root.shell.appLibrary.sortedEntries(String(appsField.text).trim())
+        var list = []
+        for (var i = 0; i < rows.length && list.length < 400; i++) {
+          var entry = rows[i] && rows[i].entry ? rows[i].entry : (rows[i] || {})
+          var id = String(entry.id || "").replace(/\.desktop$/, "")
+          if (!id) continue
+          list.push({ id: id, name: entry.name || entry.displayName || id })
+        }
+        root.appRows = list
+      } catch (error) {
+        root.appRows = []
+      }
       return
     }
+    // Omarchy 4.0.3 hands panels a scoped shell facade without appLibrary;
+    // fall back to the desktop-entry index so manage mode still lists apps.
     try {
-      var rows = root.shell.appLibrary.sortedEntries(String(appsField.text).trim())
+      var values = DesktopEntries.applications.values || []
+      var query = String(appsField.text).trim().toLowerCase()
       var list = []
-      for (var i = 0; i < rows.length && list.length < 400; i++) {
-        var entry = rows[i] && rows[i].entry ? rows[i].entry : (rows[i] || {})
+      for (var i = 0; i < values.length && list.length < 400; i++) {
+        var entry = values[i]
+        if (!entry || entry.noDisplay) continue
         var id = String(entry.id || "").replace(/\.desktop$/, "")
         if (!id) continue
-        list.push({ id: id, name: entry.name || entry.displayName || id })
+        var name = String(entry.name || id)
+        if (query && name.toLowerCase().indexOf(query) === -1
+            && id.toLowerCase().indexOf(query) === -1) continue
+        list.push({ id: id, name: name })
       }
       root.appRows = list
     } catch (error) {
@@ -701,7 +720,7 @@ PanelWindow {
         textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: root.appRows.length === 0
-              text: root.shell && root.shell.appLibrary ? "No apps match" : "App library unavailable"
+              text: String(appsField.text).trim() !== "" ? "No apps match" : "No applications found"
               color: Qt.darker(Color.foreground, 1.5)
               font.family: Style.font.family
               font.pixelSize: Style.font.body
