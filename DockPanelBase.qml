@@ -447,11 +447,28 @@ Item {
     // (com.rtosta.zapzap.svg) and an exact-match .desktop entry, showed the
     // same gear glyph as an unmatched window before this fallback existed.
     try {
+      // NOT filtering noDisplay here, unlike IconPickerPanel.qml's own
+      // fallback: that list is user-facing search results, where NoDisplay
+      // correctly means "don't offer this to pin." appEntries backs icon
+      // and name lookup for windows and apps that are already running or
+      // already pinned, a different question NoDisplay was never meant to
+      // answer -- so this filter should not be here even though it turns
+      // out not to be the reason NoDisplay apps show no icon (see below).
+      //
+      // It ISN'T, though: DesktopEntries.applications itself already drops
+      // NoDisplay entries before this code runs -- confirmed by overriding
+      // qemu.desktop (NoDisplay=true in the shipped package) with a local
+      // copy that has the line removed: only then does id "qemu" appear in
+      // .values at all, with its real icon. There is no property on this
+      // singleton to ask for the NoDisplay ones too, so an app like qemu
+      // can only get an icon through the pin-time custom-icon path
+      // (`omarchy-dock-icon set qemu --file ...`), never through this
+      // fallback, appLibrary or not. See README's "Custom icons" section.
       var values = DesktopEntries.applications.values || []
       var list = []
       for (var i = 0; i < values.length; i++) {
         var entry = values[i]
-        if (!entry || entry.noDisplay) continue
+        if (!entry) continue
         var id = String(entry.id || "").replace(/\.desktop$/, "")
         if (!id) continue
         list.push({ id: id, name: entry.name || id, icon: entry.icon || "" })
