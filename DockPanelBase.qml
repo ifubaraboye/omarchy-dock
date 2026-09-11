@@ -422,15 +422,61 @@ Item {
   onShellChanged: if (root.shell) root.refreshApps()
 
   function refreshApps() {
-    if (!root.shell || !root.shell.appLibrary) return
+    if (root.shell && root.shell.appLibrary) {
+      try {
+        var rows = root.shell.appLibrary.sortedEntries("") || []
+        // AppLibrary returns sorted rows shaped as { entry, score, key, name }.
+        // Keep only the underlying desktop entries for dock lookup.
+        root.appEntries = rows.map(function(row) { return row && row.entry ? row.entry : row })
+        root.appLibraryReady = true
+      } catch (error) {
+        console.warn("macos.dock: app library refresh failed", error)
+      }
+      refreshItems()
+      return
+    }
+    // Omarchy 4.0.3 hands panels a scoped shell facade with appLibrary null
+    // (same finding as IconPickerPanel.qml's own fallback, 6c437d1) -- but
+    // that fix only reached the picker's manage-mode list. Every OTHER
+    // consumer of appEntries stayed silently broken: entryFor()'s own
+    // unmatched-id branch is the ONLY thing that ever ran (appEntries never
+    // left [] on this Omarchy version), so real installed apps -- not just
+    // windows with a generic wrapper class -- rendered the generic
+    // "application-x-executable" icon instead of their own. Confirmed live:
+    // a plain ZapZap window, with a real themed icon on disk
+    // (com.rtosta.zapzap.svg) and an exact-match .desktop entry, showed the
+    // same gear glyph as an unmatched window before this fallback existed.
     try {
-      var rows = root.shell.appLibrary.sortedEntries("") || []
-      // AppLibrary returns sorted rows shaped as { entry, score, key, name }.
-      // Keep only the underlying desktop entries for dock lookup.
-      root.appEntries = rows.map(function(row) { return row && row.entry ? row.entry : row })
+      // NOT filtering noDisplay here, unlike IconPickerPanel.qml's own
+      // fallback: that list is user-facing search results, where NoDisplay
+      // correctly means "don't offer this to pin." appEntries backs icon
+      // and name lookup for windows and apps that are already running or
+      // already pinned, a different question NoDisplay was never meant to
+      // answer -- so this filter should not be here even though it turns
+      // out not to be the reason NoDisplay apps show no icon (see below).
+      //
+      // It ISN'T, though: DesktopEntries.applications itself already drops
+      // NoDisplay entries before this code runs -- confirmed by overriding
+      // qemu.desktop (NoDisplay=true in the shipped package) with a local
+      // copy that has the line removed: only then does id "qemu" appear in
+      // .values at all, with its real icon. There is no property on this
+      // singleton to ask for the NoDisplay ones too, so an app like qemu
+      // can only get an icon through the pin-time custom-icon path
+      // (`omarchy-dock-icon set qemu --file ...`), never through this
+      // fallback, appLibrary or not. See README's "Custom icons" section.
+      var values = DesktopEntries.applications.values || []
+      var list = []
+      for (var i = 0; i < values.length; i++) {
+        var entry = values[i]
+        if (!entry) continue
+        var id = String(entry.id || "").replace(/\.desktop$/, "")
+        if (!id) continue
+        list.push({ id: id, name: entry.name || id, icon: entry.icon || "" })
+      }
+      root.appEntries = list
       root.appLibraryReady = true
     } catch (error) {
-      console.warn("macos.dock: app library refresh failed", error)
+      console.warn("macos.dock: desktop-entry fallback failed", error)
     }
     refreshItems()
   }
@@ -1222,8 +1268,18 @@ Item {
         if (resolved && String(resolved).indexOf("application-x-executable") === -1)
           return root.nativeIconSourceFor(resolved)
       }
+      return ""
     }
-    return ""
+    // appLibrary unavailable (Omarchy 4.0.3, see refreshApps()) -- every
+    // caller of this function used to dead-end here and fall back to
+    // whatever placeholder it draws on an empty string (a broken-image
+    // glyph in AltTabPanel, nothing at all in the ghost-drag preview and the
+    // icon picker's override). DockItem's OWN icon rendering never had this
+    // problem because it never went through iconSourceFor for its fallback
+    // path -- it resolves via Quickshell.iconPath() directly, which needs no
+    // shell facade at all. Do the same here instead of giving up.
+    var themeName = IconResolver.resolveIcon(entry)
+    return themeName ? Quickshell.iconPath(themeName, true) : ""
   }
 
   // Theme icons carry their own transparent margin (often only 70-95% painted
@@ -1502,8 +1558,6 @@ Item {
     // fade would add a visible fade-in. Disable compositor animation for
     // both layer namespaces so the HUD pops in instantly.
     if (!layerRuleProcess.running) layerRuleProcess.running = true
-    // Best-effort glass blur: if Hyprland supports it, the 0.50 tint becomes frosted glass.
-    if (!blurLayerProcess.running) blurLayerProcess.running = true
     // Register the app-switcher keybinds so the HUD works out of the box.
     // Config-file binds load before this runtime eval, so a user's own bind
     // for the same combo takes precedence.
@@ -1519,14 +1573,6 @@ Item {
   Process {
     id: layerRuleProcess
     command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"]
-  }
-
-  // Glass blur — attempt to enable compositor backdrop blur behind the dock layers.
-  // Best-effort: if Hyprland/Omarchy has blur disabled or the API is missing, the
-  // dock simply falls back to the tinted translucent surface (0.50 alpha) already set.
-  Process {
-    id: blurLayerProcess
-    command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock\" }, blur = true }) hl.layer_rule({ match = { namespace = \"macos-dock-material\" }, blur = true })"]
   }
 
   Timer {
@@ -1559,6 +1605,16 @@ Item {
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "macos-dock"
     anchors { top: true; bottom: true; left: true; right: true }
+    // Anchored to all four edges on purpose: drag-to-reorder and the hover
+    // magnify effect both need pointer coordinates across the whole screen,
+    // not just the dock's own footprint. `mask` narrows hit-testing to
+    // `dockSurface`, but Hyprland's `layer_rule blur` operates on the full
+    // layer geometry regardless of the mask — a `blur = true` rule on this
+    // namespace was measured blurring the ENTIRE monitor behind it, not just
+    // the small visible pill, on any host with Hyprland blur enabled. The
+    // 0.50 alpha tint below is deliberately the only "glass" effect; no
+    // compositor backdrop blur is requested for this namespace or for
+    // "macos-dock-material" in DockPanel.qml, which shares this geometry.
     mask: Region { item: dockSurface }
 
     Rectangle {

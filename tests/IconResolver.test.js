@@ -19,6 +19,32 @@ test("resolves explicit and fallback icons", () => {
   assert.equal(resolver.resolveIcon({ id: "unknown" }), "application-x-executable")
 })
 
+test("an unmatched entry's own generic placeholder does not block the id-based fallback", () => {
+  // DockModelBase.entryFor()'s own default for an id with no matching desktop
+  // entry sets icon to this exact literal -- trusting it as a "real" icon
+  // short-circuited the FALLBACK_MAP lookup below for every one of those
+  // entries, which is exactly the case FALLBACK_MAP exists to handle.
+  assert.equal(
+    resolver.resolveIcon({ id: "tui.tile", icon: "application-x-executable" }),
+    "kitty"
+  )
+  // An id with no FALLBACK_MAP entry still degrades to the placeholder --
+  // this is "no real icon found", not a regression.
+  assert.equal(
+    resolver.resolveIcon({ id: "unknown", icon: "application-x-executable" }),
+    "application-x-executable"
+  )
+})
+
+test("terminal multiplexers sharing kitty's generic --class get kitty's icon", () => {
+  // Herdr (and any other tool invoking `kitty --class TUI.tile`) launches
+  // every pane under one class shared by whatever app runs inside it, so it
+  // never matches a specific .desktop entry. The class is kitty-specific by
+  // construction, so kitty's own icon is accurate here, not a guess.
+  assert.equal(resolver.resolveIcon({ id: "TUI.tile" }), "kitty")
+  assert.equal(resolver.resolveIcon({ id: "tui.tile" }), "kitty")
+})
+
 test("sanitizes desktop names", () => {
   assert.equal(resolver.sanitizeName("my-app.desktop"), "my app")
 })
