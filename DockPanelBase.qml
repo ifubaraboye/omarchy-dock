@@ -1541,8 +1541,6 @@ Item {
     // fade would add a visible fade-in. Disable compositor animation for
     // both layer namespaces so the HUD pops in instantly.
     if (!layerRuleProcess.running) layerRuleProcess.running = true
-    // Best-effort glass blur: if Hyprland supports it, the 0.50 tint becomes frosted glass.
-    if (!blurLayerProcess.running) blurLayerProcess.running = true
     // Register the app-switcher keybinds so the HUD works out of the box.
     // Config-file binds load before this runtime eval, so a user's own bind
     // for the same combo takes precedence.
@@ -1558,14 +1556,6 @@ Item {
   Process {
     id: layerRuleProcess
     command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"]
-  }
-
-  // Glass blur — attempt to enable compositor backdrop blur behind the dock layers.
-  // Best-effort: if Hyprland/Omarchy has blur disabled or the API is missing, the
-  // dock simply falls back to the tinted translucent surface (0.50 alpha) already set.
-  Process {
-    id: blurLayerProcess
-    command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock\" }, blur = true }) hl.layer_rule({ match = { namespace = \"macos-dock-material\" }, blur = true })"]
   }
 
   Timer {
@@ -1598,6 +1588,16 @@ Item {
     WlrLayershell.layer: WlrLayer.Top
     WlrLayershell.namespace: "macos-dock"
     anchors { top: true; bottom: true; left: true; right: true }
+    // Anchored to all four edges on purpose: drag-to-reorder and the hover
+    // magnify effect both need pointer coordinates across the whole screen,
+    // not just the dock's own footprint. `mask` narrows hit-testing to
+    // `dockSurface`, but Hyprland's `layer_rule blur` operates on the full
+    // layer geometry regardless of the mask — a `blur = true` rule on this
+    // namespace was measured blurring the ENTIRE monitor behind it, not just
+    // the small visible pill, on any host with Hyprland blur enabled. The
+    // 0.50 alpha tint below is deliberately the only "glass" effect; no
+    // compositor backdrop blur is requested for this namespace or for
+    // "macos-dock-material" in DockPanel.qml, which shares this geometry.
     mask: Region { item: dockSurface }
 
     Rectangle {
