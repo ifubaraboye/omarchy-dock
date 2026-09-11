@@ -9,7 +9,13 @@ var FALLBACK_MAP = {
     "com.google.Chrome": "google-chrome",
     "whatsapp": "WhatsApp",
     "discord": "Discord",
-    "omarchy-discord": "Discord"
+    "omarchy-discord": "Discord",
+    // Terminal multiplexers (Herdr among them) launch every pane as
+    // `kitty --class TUI.tile`, one class shared by every app running
+    // inside, so it never matches a specific .desktop entry. The class
+    // is kitty-specific by construction, so kitty's own icon is accurate
+    // here -- not a guess, unlike a generic "terminal" glyph would be.
+    "tui.tile": "kitty"
 }
 
 function sanitizeName(value) {
@@ -54,7 +60,12 @@ function customIconFile(customIcons, id) {
 function resolveIcon(item) {
     var data = item || {}
     var icon = String(data.icon || data.iconName || "").trim()
-    if (icon) return icon
+    // DockModelBase.entryFor()'s own fallback for an id with no matching
+    // desktop entry sets icon to this literal placeholder -- trusting it
+    // here short-circuits the FALLBACK_MAP lookup below for every one of
+    // those entries, which is exactly the case FALLBACK_MAP exists to
+    // handle. Treat the placeholder as "no real icon" instead of a result.
+    if (icon && icon !== "application-x-executable") return icon
 
     var id = normalizeId(data.id || data.desktopId)
     if (FALLBACK_MAP[id]) return FALLBACK_MAP[id]
