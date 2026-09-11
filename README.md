@@ -29,12 +29,21 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 
 ## Install
 
-Add and enable the plugin through Omarchy's plugin manager:
+Add and enable the plugin through Omarchy's plugin manager. The plugin's own
+id is `macos.dock` (`manifest.json`'s `id` field), not the repository name:
 
 ```bash
 omarchy plugin add https://github.com/ifubaraboye/omarchy-dock.git
-omarchy plugin enable ifubaraboye.dock
+omarchy plugin enable macos.dock
 ```
+
+The custom-icon helper (search, set, list, clear — see "Custom icons" below) lives in the plugin's own `scripts/` directory, but nothing in Omarchy's plugin system installs it onto `PATH`; do it once by hand:
+
+```bash
+ln -sf ~/.config/omarchy/plugins/macos.dock/scripts/omarchy-dock-icon ~/.local/bin/omarchy-dock-icon
+```
+
+Without this, both the point-and-click picker and the `omarchy-dock-icon` CLI fail — the dock itself works fine either way.
 
 The dock stores pins and auto-hide preference in:
 
@@ -61,11 +70,14 @@ the dock. Hiding the dock releases the zone and tiled windows reclaim the
 space. Floating windows are unaffected and may still overlap the dock by
 design.
 
-To remove the plugin, disable it and delete its installed directory:
+To remove the plugin, disable it and delete its installed directory (same id
+as Install above, `macos.dock` — not the repository name; `disable` against a
+nonexistent id exits 0 and disables nothing, so this is easy to get wrong
+silently):
 
 ```bash
-omarchy plugin disable ifubaraboye.dock
-rm -rf ~/.config/omarchy/plugins/ifubaraboye.dock
+omarchy plugin disable macos.dock
+rm -rf ~/.config/omarchy/plugins/macos.dock
 omarchy restart shell
 ```
 
@@ -99,6 +111,18 @@ No terminal required:
 
 The picker applies changes instantly through the same helper the CLI uses
 (download, trim, rounded corners, persistence) and the dock updates live.
+
+### Apps with no icon at all (not even a generic one)
+
+A few apps ship their `.desktop` file with `NoDisplay=true` — meaning "don't list me in an app launcher." QEMU is one (`qemu.desktop`, present when the `qemu` package is installed): a window with class `qemu` gets no icon anywhere in the dock, not even the generic fallback other unmatched windows get. This is not this plugin refusing to look one up: Quickshell's own `DesktopEntries.applications` list excludes `NoDisplay` entries before any plugin code runs, and there is no property on it to ask for them too.
+
+"Manage Icons…" won't offer these apps either, since it browses that same list. The CLI is the only way in, because it takes the id directly instead of browsing a list:
+
+```bash
+omarchy-dock-icon set qemu --file ~/Pictures/qemu-icon.png
+```
+
+Any icon file works — nothing requires it to come from the app's own theme.
 
 ### Command line
 
