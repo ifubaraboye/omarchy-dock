@@ -422,15 +422,44 @@ Item {
   onShellChanged: if (root.shell) root.refreshApps()
 
   function refreshApps() {
-    if (!root.shell || !root.shell.appLibrary) return
+    if (root.shell && root.shell.appLibrary) {
+      try {
+        var rows = root.shell.appLibrary.sortedEntries("") || []
+        // AppLibrary returns sorted rows shaped as { entry, score, key, name }.
+        // Keep only the underlying desktop entries for dock lookup.
+        root.appEntries = rows.map(function(row) { return row && row.entry ? row.entry : row })
+        root.appLibraryReady = true
+      } catch (error) {
+        console.warn("macos.dock: app library refresh failed", error)
+      }
+      refreshItems()
+      return
+    }
+    // Omarchy 4.0.3 hands panels a scoped shell facade with appLibrary null
+    // (same finding as IconPickerPanel.qml's own fallback, 6c437d1) -- but
+    // that fix only reached the picker's manage-mode list. Every OTHER
+    // consumer of appEntries stayed silently broken: entryFor()'s own
+    // unmatched-id branch is the ONLY thing that ever ran (appEntries never
+    // left [] on this Omarchy version), so real installed apps -- not just
+    // windows with a generic wrapper class -- rendered the generic
+    // "application-x-executable" icon instead of their own. Confirmed live:
+    // a plain ZapZap window, with a real themed icon on disk
+    // (com.rtosta.zapzap.svg) and an exact-match .desktop entry, showed the
+    // same gear glyph as an unmatched window before this fallback existed.
     try {
-      var rows = root.shell.appLibrary.sortedEntries("") || []
-      // AppLibrary returns sorted rows shaped as { entry, score, key, name }.
-      // Keep only the underlying desktop entries for dock lookup.
-      root.appEntries = rows.map(function(row) { return row && row.entry ? row.entry : row })
+      var values = DesktopEntries.applications.values || []
+      var list = []
+      for (var i = 0; i < values.length; i++) {
+        var entry = values[i]
+        if (!entry || entry.noDisplay) continue
+        var id = String(entry.id || "").replace(/\.desktop$/, "")
+        if (!id) continue
+        list.push({ id: id, name: entry.name || id, icon: entry.icon || "" })
+      }
+      root.appEntries = list
       root.appLibraryReady = true
     } catch (error) {
-      console.warn("macos.dock: app library refresh failed", error)
+      console.warn("macos.dock: desktop-entry fallback failed", error)
     }
     refreshItems()
   }
@@ -1222,8 +1251,18 @@ Item {
         if (resolved && String(resolved).indexOf("application-x-executable") === -1)
           return root.nativeIconSourceFor(resolved)
       }
+      return ""
     }
-    return ""
+    // appLibrary unavailable (Omarchy 4.0.3, see refreshApps()) -- every
+    // caller of this function used to dead-end here and fall back to
+    // whatever placeholder it draws on an empty string (a broken-image
+    // glyph in AltTabPanel, nothing at all in the ghost-drag preview and the
+    // icon picker's override). DockItem's OWN icon rendering never had this
+    // problem because it never went through iconSourceFor for its fallback
+    // path -- it resolves via Quickshell.iconPath() directly, which needs no
+    // shell facade at all. Do the same here instead of giving up.
+    var themeName = IconResolver.resolveIcon(entry)
+    return themeName ? Quickshell.iconPath(themeName, true) : ""
   }
 
   // Theme icons carry their own transparent margin (often only 70-95% painted
