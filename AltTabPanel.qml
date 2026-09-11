@@ -5,10 +5,12 @@ import qs.Commons
 import "DockModel.js" as DockModel
 
 // macOS-style app switcher HUD. The UI is a mirror image of the dock itself
-// (same glass surface, same icons) scaled up 30%, with the running dots,
-// icon magnification and name labels removed: a flat row of equally sized
-// icons. Selection is keyboard-driven while the dock's own mouse semantics
-// (hover to select, click to activate) still apply.
+// (same glass surface, same icons) scaled up 30%, with the running dots and
+// icon magnification removed: a flat row of equally sized icons, plus the
+// selected app's name underneath -- unlike the dock's own tooltip, this is
+// not hover-only, since the HUD is keyboard-driven and the pointer is often
+// nowhere near the selection. Selection is keyboard-driven while the dock's
+// own mouse semantics (hover to select, click to activate) still apply.
 //
 // Keyboard contract: Hyprland consumes the ALT+GRAVE global binds (exec
 // omarchy-shell ... altTabNext/altTabPrev), so the bound key never reaches
@@ -30,7 +32,11 @@ PanelWindow {
   property int slotWidth: 121
   property int slotSpacing: 16
   property int sidePadding: 38
-  property int surfaceHeight: 210
+  // 210 fit the icon row alone; +50 makes room for the name label below it
+  // without touching dockRow's own centering (still anchors.centerIn: parent
+  // at its original 131px height -- the extra space lands below it, where
+  // the label is anchored to the surface's bottom edge).
+  property int surfaceHeight: 260
 
   signal activated(string appId, string appName)
 
@@ -190,6 +196,25 @@ PanelWindow {
           }
         }
       }
+    }
+
+    // The selected app's name. Persistent, not hover-only, since the HUD is
+    // driven by ALT+TAB and the pointer is usually nowhere near the
+    // selection -- macOS's own switcher shows this the same way.
+    Text {
+      textFormat: Text.PlainText
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: 18
+      anchors.horizontalCenter: parent.horizontalCenter
+      text: (root.selectedIndex >= 0 && root.selectedIndex < root.apps.length)
+        ? (root.apps[root.selectedIndex].name || root.apps[root.selectedIndex].id || "")
+        : ""
+      color: Color.foreground
+      font.family: Style.font.family
+      font.pixelSize: Style.font.body
+      elide: Text.ElideRight
+      width: Math.min(implicitWidth, root.surfaceWidth - 2 * root.sidePadding)
+      horizontalAlignment: Text.AlignHCenter
     }
 
     Item {
