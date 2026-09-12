@@ -23,6 +23,33 @@ test("parses and normalizes pinned ids", () => {
   assert.deepEqual(Array.from(model.parsePinned('{"pinned":["code.desktop","code","ghostty"]}')), ["code", "ghostty"])
 })
 
+test("merges app-library and desktop entries for installed apps without windows", () => {
+  const merged = model.mergeAppEntries(
+    [{ entry: { id: "running.desktop", name: "Running", icon: "running-icon" } }],
+    [
+      { id: "running.desktop", name: "Duplicate", icon: "duplicate-icon" },
+      { id: "idle.desktop", name: "Idle App", icon: "idle-icon" },
+    ],
+  )
+
+  assert.deepEqual(JSON.parse(JSON.stringify(merged)), [
+    { id: "running", name: "Running", icon: "running-icon" },
+    { id: "idle", name: "Idle App", icon: "idle-icon" },
+  ])
+})
+
+test("merged app entries preserve searchable names and ids", () => {
+  const merged = model.mergeAppEntries([], [
+    { desktopId: "org.example.Writer.desktop", displayName: "Writer" },
+    { id: "terminal", name: "Terminal", iconName: "kitty" },
+  ])
+
+  assert.equal(merged[0].id, "org.example.Writer")
+  assert.equal(merged[0].name, "Writer")
+  assert.equal(merged[1].id, "terminal")
+  assert.equal(merged[1].icon, "kitty")
+})
+
 test("round trips pins", () => {
   assert.deepEqual(Array.from(model.parsePinned(model.serializePinned(["code", "ghostty"]))), ["code", "ghostty"])
 })

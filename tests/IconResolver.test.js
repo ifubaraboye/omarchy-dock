@@ -12,6 +12,11 @@ function loadQmlJs(path) {
 
 const resolver = loadQmlJs("IconResolver.js")
 
+test("bundled neutral fallback asset is present", () => {
+  assert.equal(resolver.DEFAULT_ICON_ASSET, "default-app.svg")
+  assert.equal(fs.existsSync(`assets/${resolver.DEFAULT_ICON_ASSET}`), true)
+})
+
 test("resolves explicit and fallback icons", () => {
   assert.equal(resolver.resolveIcon({ icon: "mail" }), "mail")
   assert.equal(resolver.resolveIcon({ id: "code.desktop" }), "vscode")

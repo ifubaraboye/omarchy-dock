@@ -19,6 +19,37 @@ function normalizeId(value) {
     return id.endsWith(".desktop") ? id.slice(0, -8) : id
 }
 
+// Combines the shell's app-library view with the desktop-entry index. The
+// former may be ordered/fuzzy and may omit apps that have no open window;
+// the latter is the complete set of entries Quickshell exposes. Earlier
+// entries win so the app-library's richer metadata remains authoritative.
+function mergeAppEntries(primary, secondary) {
+    var result = []
+    var seen = {}
+
+    function append(source) {
+        ;(source || []).forEach(function(row) {
+            var entry = row && row.entry ? row.entry : row
+            if (!entry) return
+            var id = normalizeId(entry.id || entry.desktopId)
+            if (!id || seen[id]) return
+
+            var copy = {}
+            for (var key in entry) copy[key] = entry[key]
+            copy.id = id
+            if (!copy.name) copy.name = copy.displayName || id
+            if (!copy.icon) copy.icon = copy.iconName || copy.appIcon || ""
+
+            seen[id] = true
+            result.push(copy)
+        })
+    }
+
+    append(primary)
+    append(secondary)
+    return result
+}
+
 function stripDesktop(value) { return normalizeId(value) }
 
 function toArray(value) {
@@ -424,6 +455,7 @@ if (typeof module !== "undefined" && module.exports) {
         DEFAULT_PINNED: DEFAULT_PINNED,
         LAYOUT_OPTS: LAYOUT_OPTS,
         normalizeId: normalizeId,
+        mergeAppEntries: mergeAppEntries,
         stripDesktop: stripDesktop,
         toArray: toArray,
         parsePinned: parsePinned,

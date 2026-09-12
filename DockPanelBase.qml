@@ -426,61 +426,31 @@ Item {
   onShellChanged: if (root.shell) root.refreshApps()
 
   function refreshApps() {
+    var libraryEntries = []
     if (root.shell && root.shell.appLibrary) {
       try {
         var rows = root.shell.appLibrary.sortedEntries("") || []
         // AppLibrary returns sorted rows shaped as { entry, score, key, name }.
-        // Keep only the underlying desktop entries for dock lookup.
-        root.appEntries = rows.map(function(row) { return row && row.entry ? row.entry : row })
-        root.appLibraryReady = true
+        // Keep only the underlying desktop entries for dock lookup. The
+        // desktop-entry index is merged below because this facade can omit
+        // installed apps that have no open window yet.
+        libraryEntries = rows.map(function(row) { return row && row.entry ? row.entry : row })
       } catch (error) {
         console.warn("macos.dock: app library refresh failed", error)
       }
-      refreshItems()
-      return
     }
-    // Omarchy 4.0.3 hands panels a scoped shell facade with appLibrary null
-    // (same finding as IconPickerPanel.qml's own fallback, 6c437d1) -- but
-    // that fix only reached the picker's manage-mode list. Every OTHER
-    // consumer of appEntries stayed silently broken: entryFor()'s own
-    // unmatched-id branch is the ONLY thing that ever ran (appEntries never
-    // left [] on this Omarchy version), so real installed apps -- not just
-    // windows with a generic wrapper class -- rendered the generic
-    // "application-x-executable" icon instead of their own. Confirmed live:
-    // a plain ZapZap window, with a real themed icon on disk
-    // (com.rtosta.zapzap.svg) and an exact-match .desktop entry, showed the
-    // same gear glyph as an unmatched window before this fallback existed.
+
+    // Omarchy 4.0.3 hands panels a scoped shell facade with appLibrary null.
+    // DesktopEntries is also the source that lets Manage Icons show apps
+    // before their first window opens, so always merge it when available.
     try {
-      // NOT filtering noDisplay here, unlike IconPickerPanel.qml's own
-      // fallback: that list is user-facing search results, where NoDisplay
-      // correctly means "don't offer this to pin." appEntries backs icon
-      // and name lookup for windows and apps that are already running or
-      // already pinned, a different question NoDisplay was never meant to
-      // answer -- so this filter should not be here even though it turns
-      // out not to be the reason NoDisplay apps show no icon (see below).
-      //
-      // It ISN'T, though: DesktopEntries.applications itself already drops
-      // NoDisplay entries before this code runs -- confirmed by overriding
-      // qemu.desktop (NoDisplay=true in the shipped package) with a local
-      // copy that has the line removed: only then does id "qemu" appear in
-      // .values at all, with its real icon. There is no property on this
-      // singleton to ask for the NoDisplay ones too, so an app like qemu
-      // can only get an icon through the pin-time custom-icon path
-      // (`omarchy-dock-icon set qemu --file ...`), never through this
-      // fallback, appLibrary or not. See README's "Custom icons" section.
       var values = DesktopEntries.applications.values || []
-      var list = []
-      for (var i = 0; i < values.length; i++) {
-        var entry = values[i]
-        if (!entry) continue
-        var id = String(entry.id || "").replace(/\.desktop$/, "")
-        if (!id) continue
-        list.push({ id: id, name: entry.name || id, icon: entry.icon || "" })
-      }
-      root.appEntries = list
-      root.appLibraryReady = true
+      root.appEntries = DockModel.mergeAppEntries(libraryEntries, values)
+      root.appLibraryReady = root.appEntries.length > 0
     } catch (error) {
       console.warn("macos.dock: desktop-entry fallback failed", error)
+      root.appEntries = DockModel.mergeAppEntries(libraryEntries, [])
+      root.appLibraryReady = root.appEntries.length > 0
     }
     refreshItems()
   }
@@ -566,6 +536,11 @@ Item {
   function triggerLaunchBounce(id) {
     if (!id || id === "__phantom__") return
     if (id === root.floatingId) return
+    // No visible surface, no bounce: when auto-hide has slid the dock
+    // off-screen (or the dock is toggled off) the upward bounce would peek
+    // out at the screen edge while the app opens. Skip it outright instead
+    // of animating where nobody can see it properly.
+    if (!root.enabled || (root.autoHide && root.autoHidden)) return
     if (root.bouncingIds.indexOf(id) !== -1) return
     var d = root.delegateById[id]
     if (d && typeof d.playBounce === "function") {
@@ -672,6 +647,19 @@ Item {
     Quickshell.execDetached(["omarchy-shell", "notify", "macos.dock is disabled because rosakodu.dock is enabled"])
   }
 
+  // Omarchy 4.0.3 scopes appLibrary away from panel plugins. Keep using the
+  // shell service when available, with the UWSM desktop-entry path as fallback.
+  function launchApp(id, name) {
+    var appId = String(id || "").replace(/\.desktop$/, "")
+    if (!appId) return false
+    if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function") {
+      root.shell.appLibrary.launch(appId, String(name || appId))
+      return true
+    }
+    Quickshell.execDetached(["uwsm-app", "--", "gtk-launch", appId + ".desktop"])
+    return true
+  }
+
   function handleClick(item) {
     if (!item) return
     if (item.running) {
@@ -688,8 +676,7 @@ Item {
     // The launch bounce fires when the app actually opens (NOT RUNNING ->
     // RUNNING in refreshItems), not here — so the motion coincides with the
     // app appearing, like the native Dock.
-    if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
-      root.shell.appLibrary.launch(item.id, entry.name || item.name)
+    root.launchApp(item.id, (entry && entry.name) || item.name)
   }
 
   function openDownloads() {
@@ -817,8 +804,7 @@ Item {
     }
     var entry = DockModel.entryFor(id, root.appEntries)
     var label = name || (entry && entry.name) || id
-    if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.launch === "function")
-      root.shell.appLibrary.launch(id, label)
+    root.launchApp(id, label)
   }
 
   Timer {
@@ -1302,7 +1288,7 @@ Item {
   }
 
   function defaultIconSource() {
-    return Util.fileUrl(root.home + "/.config/omarchy/plugins/macos.dock/assets/default-app.svg")
+    return Util.fileUrl(root.home + "/.config/omarchy/plugins/macos.dock/assets/" + IconResolver.DEFAULT_ICON_ASSET)
   }
 
   // Theme icons carry their own transparent margin (often only 70-95% painted
@@ -1515,6 +1501,10 @@ Item {
   Connections {
     target: root.shell ? root.shell.appLibrary : null
     function onAppsChanged() { root.refreshApps() }
+  }
+  Connections {
+    target: DesktopEntries.applications
+    function onValuesChanged() { root.refreshApps() }
   }
   Connections {
     target: Hyprland

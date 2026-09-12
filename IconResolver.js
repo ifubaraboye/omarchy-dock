@@ -18,6 +18,8 @@ var FALLBACK_MAP = {
     "tui.tile": "kitty"
 }
 
+var DEFAULT_ICON_ASSET = "default-app.svg"
+
 function sanitizeName(value) {
     return String(value || "").replace(/\.desktop$/i, "").replace(/[-_]+/g, " ").trim()
 }
@@ -80,6 +82,7 @@ function resolveIcon(item) {
 if (typeof module !== "undefined" && module.exports) {
     module.exports = {
         FALLBACK_MAP: FALLBACK_MAP,
+        DEFAULT_ICON_ASSET: DEFAULT_ICON_ASSET,
         sanitizeName: sanitizeName,
         normalizeId: normalizeId,
         customIconFile: customIconFile,
