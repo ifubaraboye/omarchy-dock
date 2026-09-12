@@ -21,7 +21,10 @@ function parseResponse(text) {
     } catch (error) {
         return []
     }
-    if (!Array.isArray(parsed)) return []
+    // The bundled helper normalizes the macOSicons response to an array, but
+    // older installed helpers may pass the API envelope through unchanged.
+    // Accept both shapes so the picker remains compatible during upgrades.
+    if (!Array.isArray(parsed)) parsed = parsed && Array.isArray(parsed.hits) ? parsed.hits : []
     var results = []
     parsed.forEach(function(item) {
         if (!item || !item.iOSUrl) return

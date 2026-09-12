@@ -8,6 +8,7 @@ Item {
 
   required property var itemData
   property int iconSize: 52
+  property string dockSide: "bottom"
   // Targets driven by the panel's layout engine. Every change is animated so
   // nothing ever teleports.
   property real targetScale: 1
@@ -49,6 +50,11 @@ Item {
     SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   scale: root.targetScale
+  transformOrigin: {
+    if (root.dockSide === "left") return Item.Left
+    if (root.dockSide === "right") return Item.Right
+    return Item.Bottom
+  }
 
   Behavior on y {
     enabled: root.animationEnabled

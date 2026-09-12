@@ -209,34 +209,74 @@ function orderPinned(order, pinnedIds) {
     return result
 }
 
-// Continuous layout driven by the cursor. Each item's slot widens with its
-// magnification so icons never overlap and the total width grows as the cursor
-// approaches. The wrapper sits at the flow position and is centered in its
-// scaled slot by the delegate (width = slotWidth * scale), so a single
-// magnified icon stays centered in the dock. flowWidth is the true content
-// span (no trailing gap), keeping the row centered for any item count.
+// Smooth pointer wave used by the dock. The cosine falloff keeps the hover
+// response soft at both ends of the reach; the matching ramp is its integral,
+// so neighboring slots move exactly far enough to make room for the growth.
+function hoverFalloff(distance, reach) {
+    var t = Math.abs(distance) / reach
+    if (t >= 1) return 0
+    return 0.5 * (1 + Math.cos(Math.PI * t))
+}
+
+function hoverRamp(distance, reach) {
+    var u = distance / reach
+    if (u >= 1) return 0.5
+    if (u <= -1) return -0.5
+    return 0.5 * u + Math.sin(Math.PI * u) / (2 * Math.PI)
+}
+
+// Continuous layout driven by the cursor. Slot centers are measured from the
+// resting row, then every slot receives a scale and a centered shift. This is
+// important: measuring each center after the previous slot has grown makes the
+// hover wave feed back into itself and causes the row to wobble at the edges.
 function computeLayout(flow, cursorX, opts) {
     opts = opts || LAYOUT_OPTS
     var placements = {}
-    var x = 0
     var cursorValid = typeof cursorX === "number" && cursorX >= 0
-    var lastEnd = 0
+    var reach = Math.max(opts.slotWidth, opts.radius)
+    var growth = opts.iconSize * (opts.hoverScale - 1)
+    var spread = growth * (reach / opts.slotWidth)
+    var resting = []
+    var x = 0
+
     for (var i = 0; i < flow.length; i++) {
         var item = flow[i]
         var slot = item.separator ? opts.separatorWidth : opts.slotWidth
-        var center = x + slot / 2
+        resting.push({ item: item, x: x, slot: slot, center: x + slot / 2 })
+        x += slot + opts.spacing
+    }
+
+    var contentWidth = Math.max(0, x - opts.spacing)
+    var pointer = cursorValid ? cursorX : -1
+    var startShift = cursorValid ? spread * hoverRamp(-pointer, reach) : 0
+    var endShift = cursorValid ? spread * hoverRamp(contentWidth - pointer, reach) : 0
+    var recenter = (startShift + endShift) / 2
+    var lastEnd = 0
+    var grownWidth = 0
+
+    for (var j = 0; j < resting.length; j++) {
+        var entry = resting[j]
+        var item = entry.item
         var scale = 1
         var lift = 0
-        if (cursorValid) {
-            var influence = Math.max(0, 1 - Math.abs(cursorX - center) / opts.radius)
-            scale = 1 + (opts.hoverScale - 1) * influence * influence
+        var shift = 0
+        if (cursorValid && !item.separator) {
+            var distance = entry.center - pointer
+            scale = 1 + (opts.hoverScale - 1) * hoverFalloff(distance, reach)
+            shift = spread * hoverRamp(distance, reach) - recenter
             lift = (scale - 1) * opts.iconSize * 0.5
         }
-        placements[item.id] = { x: x, scale: scale, lift: lift, phantom: !!item.phantom }
-        x += slot * scale + opts.spacing
-        lastEnd = x - opts.spacing
+        // The delegate itself widens around its center, so its resting x plus
+        // the wave shift is already the correct left edge. Keeping that edge
+        // stable also keeps a one-icon dock centered while it magnifies.
+        var placedX = entry.x + shift
+        placements[item.id] = { x: placedX, scale: scale, lift: lift, phantom: !!item.phantom }
+        lastEnd = Math.max(lastEnd, placedX + entry.slot * scale)
+        grownWidth += entry.slot * (scale - 1)
     }
-    return { placements: placements, flowWidth: lastEnd, totalWidth: lastEnd + 2 * opts.sidePadding }
+
+    var expandedWidth = contentWidth + grownWidth
+    return { placements: placements, flowWidth: expandedWidth, totalWidth: expandedWidth + 2 * opts.sidePadding }
 }
 
 // Returns the flow index the cursor currently falls over (0..flow.length),
@@ -253,8 +293,8 @@ function insertionIndexFor(cursorX, flow, opts) {
         var center = x + slot / 2
         var scale = 1
         if (cursorValid) {
-            var influence = Math.max(0, 1 - Math.abs(cursorX - center) / opts.radius)
-            scale = 1 + (opts.hoverScale - 1) * influence * influence
+            var reach = Math.max(opts.slotWidth, opts.radius)
+            scale = 1 + (opts.hoverScale - 1) * hoverFalloff(cursorX - center, reach)
         }
         if (cursorX < x + slot * scale / 2) return i
         x += slot * scale + opts.spacing

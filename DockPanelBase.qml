@@ -134,6 +134,7 @@ Item {
   property real tooltipCenterX: 0
   property string pendingFocusTarget: ""
   property string pendingCursorPosition: ""
+  property var pickerReturnItem: null
   property var customIcons: ({})
   property int customIconRevision: 0
   property var nativeIconCache: ({})
@@ -143,7 +144,10 @@ Item {
   property int nativeIconRevision: 0
   // The icon picker helper (~/.local/bin/omarchy-dock-icon) resolved at shell
   // start; falls back to PATH lookup so the GUI works however it was installed.
-  property string helperPath: root.home + "/.local/bin/omarchy-dock-icon"
+  // Prefer the helper shipped with this plugin. The ~/.local/bin symlink is
+  // optional, so relying on it leaves the picker stuck in "Searching" on a
+  // fresh install where the bundled script is present but the link is not.
+  property string helperPath: root.home + "/.config/omarchy/plugins/macos.dock/scripts/omarchy-dock-icon"
   // Downloads / Trash — fixed special items at the right end, after the separator.
   property string downloadsPath: home + "/Downloads"
   property string trashFilesPath: home + "/.local/share/Trash/files"
@@ -641,7 +645,9 @@ Item {
       if (!d) continue
       d.x = p.x
       d.targetScale = p.scale
-      d.targetLift = p.lift
+      // Side docks grow inward through the transform origin; a vertical
+      // translation here would make the icon drift along the edge instead.
+      d.targetLift = root.vertical ? 0 : p.lift
       d.targetOpacity = (id === root.floatingId) ? 0 : (p.phantom ? 0.45 : 1)
     }
     // The dragged item is excluded from the flow so it has no placement; hide
@@ -903,23 +909,27 @@ Item {
     if (action === "togglePin") root.pinnedIds = DockModel.togglePinned(root.pinnedIds, item.id)
     else if (action === "newWindow") handleClick({ id: item.id, name: item.name, running: false })
     else if (action === "close") closeWindow(item.id)
-    else if (action === "setIcon") root.openIconPicker(item.id, item.name, false)
-    else if (action === "manageIcons") root.openIconManager()
+    else if (action === "setIcon") root.openIconPicker(item.id, item.name, false, true)
+    else if (action === "manageIcons") root.openIconManager(item)
     if (action === "togglePin") { refreshItems(); savePinned() }
   }
 
-  function openIconPicker(appId, appName, fromManage) {
+  function openIconPicker(appId, appName, fromManage, fromDockMenu) {
     root.menuOpen = false
+    dockMenu.opened = false
+    root.pickerReturnItem = dockMenu.itemData
     root.pickerOpen = true
     root.hidePreview()
-    iconPicker.openForApp(appId, appName, fromManage)
+    iconPicker.openForApp(appId, appName, fromManage, fromDockMenu)
   }
 
-  function openIconManager() {
+  function openIconManager(item) {
     root.menuOpen = false
+    dockMenu.opened = false
+    root.pickerReturnItem = item || dockMenu.itemData
     root.pickerOpen = true
     root.hidePreview()
-    iconPicker.openManage()
+    iconPicker.openManage(true)
   }
 
   function closeWindow(id) {
@@ -1726,6 +1736,7 @@ Item {
               anchors.centerIn: parent
               itemData: wrapper.liveData
               iconSize: root.iconSize
+              dockSide: root.dockSide
               animationEnabled: wrapper.animating
               iconSourceOverride: root.iconSourceFor(modelData)
               onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
@@ -1861,6 +1872,7 @@ Item {
     id: dockMenu
     autoHideEnabled: root.autoHide
     dockSide: root.dockSide
+    iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false
   }
@@ -1871,6 +1883,17 @@ Item {
     customIcons: root.customIcons
     iconSourceFor: function(id) { return root.iconSourceFor(id) }
     helperPath: root.helperPath
+    onBackRequested: {
+      var previousItem = root.pickerReturnItem
+      iconPicker.close()
+      root.pickerOpen = false
+      // Let the picker surface finish unmapping before restoring the dock
+      // menu. Without the deferred handoff, its back button can remain as a
+      // small orphaned input surface above the newly opened menu.
+      Qt.callLater(function() {
+        if (previousItem) root.openMenu(previousItem, Qt.point(root.width / 2, root.height / 2))
+      })
+    }
     onOpenChanged: {
       if (!open) root.pickerOpen = false
     }
@@ -1880,7 +1903,7 @@ Item {
   // back to PATH. The picker surface shows a clear error if neither exists.
   Process {
     id: helperResolveProcess
-    command: ["bash", "-c", "if [ -x \"$HOME/.local/bin/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.local/bin/omarchy-dock-icon\"; else command -v omarchy-dock-icon || true; fi"]
+    command: ["bash", "-c", "if [ -x \"$HOME/.config/omarchy/plugins/macos.dock/scripts/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.config/omarchy/plugins/macos.dock/scripts/omarchy-dock-icon\"; elif [ -x \"$HOME/.local/bin/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.local/bin/omarchy-dock-icon\"; else command -v omarchy-dock-icon || true; fi"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
