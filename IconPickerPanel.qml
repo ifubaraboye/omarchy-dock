@@ -25,6 +25,7 @@ PanelWindow {
   property string currentAppId: ""
   property string currentAppName: ""
   property bool fromManage: false
+  property bool fromDockMenu: false
   property var customIcons: ({})
   property var iconSourceFor: function(id) { return "" }
   property string helperPath: ""
@@ -41,6 +42,8 @@ PanelWindow {
   property bool pasteVisible: false
   property int gridCell: 112
 
+  signal backRequested()
+
   function appHasCustomIcon(id) {
     return IconResolver.customIconFile(root.customIcons, id) !== ""
   }
@@ -51,10 +54,11 @@ PanelWindow {
     return String(source) + "?v=" + root.appliedRevision
   }
 
-  function openForApp(appId, appName, fromManage) {
+  function openForApp(appId, appName, fromManage, fromDockMenu) {
     root.currentAppId = String(appId || "")
     root.currentAppName = String(appName || IconResolver.sanitizeName(root.currentAppId))
     root.fromManage = !!fromManage
+    root.fromDockMenu = !!fromDockMenu
     root.mode = "picker"
     root.pasteVisible = false
     root.statusText = ""
@@ -64,7 +68,9 @@ PanelWindow {
     root.prefillSearch()
   }
 
-  function openManage() {
+  function openManage(fromDockMenu) {
+    root.fromManage = false
+    root.fromDockMenu = !!fromDockMenu
     root.mode = "manage"
     root.statusText = ""
     root.open = true
@@ -75,6 +81,8 @@ PanelWindow {
 
   function close() {
     root.open = false
+    root.fromManage = false
+    root.fromDockMenu = false
     root.results = []
     root.appRows = []
     root.statusText = ""
@@ -145,9 +153,10 @@ PanelWindow {
   }
 
   function reloadApps() {
+    var query = String(appsField.text).trim().toLowerCase()
     if (root.shell && root.shell.appLibrary) {
       try {
-        var rows = root.shell.appLibrary.sortedEntries(String(appsField.text).trim())
+        var rows = root.shell.appLibrary.sortedEntries(String(appsField.text).trim()) || []
         var list = []
         for (var i = 0; i < rows.length && list.length < 400; i++) {
           var entry = rows[i] && rows[i].entry ? rows[i].entry : (rows[i] || {})
@@ -155,17 +164,20 @@ PanelWindow {
           if (!id) continue
           list.push({ id: id, name: entry.name || entry.displayName || id })
         }
-        root.appRows = list
+        // A scoped shell facade can expose the library before its first
+        // DesktopEntries refresh. Fall through to the live index instead of
+        // presenting an empty manager during that short window.
+        if (list.length > 0) {
+          root.appRows = list
+          return
+        }
       } catch (error) {
-        root.appRows = []
       }
-      return
     }
     // Omarchy 4.0.3 hands panels a scoped shell facade without appLibrary;
     // fall back to the desktop-entry index so manage mode still lists apps.
     try {
       var values = DesktopEntries.applications.values || []
-      var query = String(appsField.text).trim().toLowerCase()
       var list = []
       for (var i = 0; i < values.length && list.length < 400; i++) {
         var entry = values[i]
@@ -292,7 +304,7 @@ PanelWindow {
     id: card
     anchors.centerIn: parent
     width: 760
-    height: 540
+    height: root.mode === "manage" ? 600 : 540
     radius: 18
     color: Util.alpha(Color.background, 0.97)
     border.color: Util.alpha(Color.foreground, 0.18)
@@ -310,16 +322,16 @@ PanelWindow {
         spacing: 12
 
         // Header -------------------------------------------------------------
-        Row {
+        Item {
           id: headerRow
           width: parent.width
           height: 50
-          spacing: 12
 
           Rectangle {
             id: previewTile
             width: 48
             height: 48
+            anchors.left: parent.left
             radius: 12
             color: Util.alpha(Color.foreground, 0.07)
             visible: root.mode === "picker"
@@ -346,8 +358,10 @@ PanelWindow {
           }
 
           Column {
+            anchors.left: parent.left
+            anchors.leftMargin: root.mode === "picker" ? previewTile.width + 12 : 0
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - (root.mode === "picker" ? previewTile.width + 12 : 0) - (root.mode === "picker" && root.fromManage ? backButton.width + 12 : 0) - closeButton.width - 12
+            width: parent.width - (root.mode === "picker" ? previewTile.width + 12 : 0) - ((root.mode === "picker" || root.mode === "manage") && (root.fromManage || root.fromDockMenu) ? backButton.width + 12 : 0) - closeButton.width - 12
             spacing: 2
 
             Text {
@@ -376,16 +390,18 @@ PanelWindow {
           Rectangle {
             id: backButton
             anchors.verticalCenter: parent.verticalCenter
-            width: 74
-            height: 30
+            width: 108
+            height: 34
             radius: 8
             color: backMouse.containsMouse ? Util.alpha(Color.foreground, 0.10) : "transparent"
-            visible: root.mode === "picker" && root.fromManage
+            visible: (root.mode === "picker" && (root.fromManage || root.fromDockMenu)) || (root.mode === "manage" && root.fromDockMenu)
+            anchors.right: closeButton.left
+            anchors.rightMargin: 12
 
             Text {
         textFormat: Text.PlainText
               anchors.centerIn: parent
-              text: "‹ All apps"
+              text: root.fromManage ? "‹ All apps" : "‹ Dock menu"
               color: Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
@@ -394,13 +410,22 @@ PanelWindow {
               id: backMouse
               anchors.fill: parent
               hoverEnabled: true
-              onClicked: { root.mode = "manage"; root.statusText = ""; Qt.callLater(function() { appsField.forceActiveFocus() }) }
+              onClicked: {
+                if (root.fromManage) {
+                  root.mode = "manage"
+                  root.statusText = ""
+                  Qt.callLater(function() { appsField.forceActiveFocus() })
+                } else {
+                  root.backRequested()
+                }
+              }
             }
           }
 
           Rectangle {
             id: closeButton
             anchors.verticalCenter: parent.verticalCenter
+            anchors.right: parent.right
             width: 36
             height: 36
             radius: 10
@@ -533,7 +558,9 @@ PanelWindow {
         // Content ------------------------------------------------------------
         Rectangle {
           width: parent.width
-          height: 314 - (root.pasteVisible ? 58 : 0)
+          height: root.mode === "manage"
+            ? 400
+            : 314 - (root.pasteVisible ? 58 : 0)
           radius: 12
           clip: true
           color: "transparent"

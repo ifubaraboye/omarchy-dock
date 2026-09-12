@@ -8,6 +8,7 @@ PanelWindow {
   id: root
 
   property var itemData: null
+  property string iconSource: ""
   property bool opened: false
   property point requestedPosition: Qt.point(0, 0)
   property bool autoHideEnabled: true
@@ -24,81 +25,206 @@ PanelWindow {
   mask: Region { item: dismissSurface }
 
   Rectangle {
-    id: menu
-    x: Math.max(12, Math.min(root.requestedPosition.x, root.width - width - 12))
-    y: Math.max(12, Math.min(root.requestedPosition.y, root.height - height - 12))
-    width: 180
-    height: menuColumn.implicitHeight + 16
-    radius: 14
-    color: Util.alpha(Color.background, 0.92)
-    border.color: Util.alpha(Color.foreground, 0.08)
+    id: card
+    x: Math.round((root.width - width) / 2)
+    y: Math.round((root.height - height) / 2)
+    width: 650
+    height: 370
+    radius: 22
+    color: Util.alpha(Color.background, 0.97)
+    border.color: Util.alpha(Color.foreground, 0.14)
     border.width: 1
 
     Column {
-      id: menuColumn
       anchors.fill: parent
-      anchors.margins: 8
-      spacing: 2
+      anchors.margins: 22
+      spacing: 16
 
-      Repeater {
-        model: [
-          { action: "setIcon", label: "Get Info", separator: false },
-          { action: "", label: "", separator: true },
-          { action: "togglePin", label: root.itemData && root.itemData.pinned ? "Unpin" : "Pin", separator: false },
-          { action: "newWindow", label: "New Window", separator: false },
-          { action: "close", label: "Close", separator: false },
-          { action: "", label: "", separator: true },
-          { action: "manageIcons", label: "Manage Icons", separator: false },
-          { action: "", label: "", separator: true },
-          { action: "toggleAutoHide", label: root.autoHideEnabled ? "Turn Hiding Off" : "Turn Hiding On", separator: false },
-          { action: "", label: "", separator: true },
-          { action: "setSideBottom", label: "Position: Bottom", separator: false, side: "bottom" },
-          { action: "setSideLeft", label: "Position: Left", separator: false, side: "left" },
-          { action: "setSideRight", label: "Position: Right", separator: false, side: "right" }
-        ]
-        delegate: Rectangle {
-          required property var modelData
-          width: parent.width
-          height: modelData.separator ? 10 : 36
-          radius: 8
-          color: !modelData.separator && buttonMouse.containsMouse ? Util.alpha(Color.foreground, 0.10) : "transparent"
+      Item {
+        width: parent.width
+        height: 58
 
+        Rectangle {
+          width: 58
+          height: 58
+          radius: 16
+          anchors.left: parent.left
+          color: Util.alpha(Color.foreground, 0.08)
+
+          Image {
+            id: appIcon
+            anchors.centerIn: parent
+            width: 48
+            height: 48
+            source: root.iconSource
+            sourceSize: Qt.size(96, 96)
+            fillMode: Image.PreserveAspectFit
+            visible: status === Image.Ready
+          }
           Text {
-        textFormat: Text.PlainText
-            visible: !modelData.separator
-            anchors.fill: parent
-            anchors.leftMargin: 10
-            verticalAlignment: Text.AlignVCenter
-            text: modelData.side
-                    ? ((root.dockSide === modelData.side ? "• " : "  ") + modelData.label)
-                    : modelData.label
+            anchors.centerIn: parent
+            text: root.itemData && root.itemData.name ? String(root.itemData.name).charAt(0).toUpperCase() : "•"
             color: Color.foreground
             font.family: Style.font.family
-            font.pixelSize: Style.font.body
+            font.pixelSize: 24
+            font.bold: true
+            visible: !appIcon.visible
           }
+        }
 
-          Rectangle {
-            visible: modelData.separator
-            anchors.left: parent.left
-            anchors.leftMargin: 10
-            anchors.right: parent.right
-            anchors.rightMargin: 10
-            anchors.verticalCenter: parent.verticalCenter
-            height: 1
-            color: Util.alpha(Color.foreground, 0.12)
+        Column {
+          anchors.left: parent.left
+          anchors.leftMargin: 72
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 3
+          Text {
+            text: root.itemData && root.itemData.name ? root.itemData.name : "Application"
+            color: Color.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.title
+            font.bold: true
           }
+          Text {
+            text: root.itemData && root.itemData.running ? "Running application" : "Pinned application"
+            color: Util.alpha(Color.foreground, 0.52)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
 
-          MouseArea {
-            id: buttonMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            enabled: !modelData.separator
-            onClicked: {
-              root.actionTriggered(modelData.action, root.itemData)
-              root.opened = false
+        Rectangle {
+          width: 32
+          height: 32
+          anchors.right: parent.right
+          radius: 16
+          anchors.verticalCenter: parent.verticalCenter
+          color: closeMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : "transparent"
+          Text { anchors.centerIn: parent; text: "×"; color: Util.alpha(Color.foreground, 0.65); font.pixelSize: 22 }
+          MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; onClicked: root.opened = false }
+        }
+      }
+
+      Rectangle { width: parent.width; height: 1; color: Util.alpha(Color.foreground, 0.10) }
+
+      Text {
+        text: "Application actions"
+        color: Color.foreground
+        font.family: Style.font.family
+        font.pixelSize: Style.font.heading
+        font.bold: true
+      }
+
+      Row {
+        width: parent.width
+        height: 112
+        spacing: 10
+
+        Repeater {
+          model: [
+            { action: "setIcon", label: "Get Info", glyph: "✦", detail: "Change icon" },
+            { action: "togglePin", label: root.itemData && root.itemData.pinned ? "Unpin" : "Pin", glyph: "⌖", detail: "Dock placement" },
+            { action: "newWindow", label: "New Window", glyph: "＋", detail: "Open another" },
+            { action: "manageIcons", label: "Manage Icons", glyph: "▦", detail: "Browse apps" }
+          ]
+          delegate: Rectangle {
+            required property var modelData
+            width: (parent.width - 30) / 4
+            height: parent.height
+            radius: 14
+            color: actionMouse.containsMouse ? Util.alpha(Color.accent, 0.16) : Util.alpha(Color.foreground, 0.065)
+            border.color: actionMouse.containsMouse ? Util.alpha(Color.accent, 0.55) : "transparent"
+            border.width: 1
+
+            Column {
+              anchors.centerIn: parent
+              spacing: 8
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: modelData.glyph
+                color: actionMouse.containsMouse ? Color.accent : Color.foreground
+                font.pixelSize: 24
+              }
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: modelData.label
+                color: Color.foreground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+              }
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: modelData.detail
+                color: Util.alpha(Color.foreground, 0.45)
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+
+            MouseArea {
+              id: actionMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              onClicked: {
+                root.actionTriggered(modelData.action, root.itemData)
+              }
             }
           }
         }
+      }
+
+      Row {
+        width: parent.width
+        height: 38
+        spacing: 8
+
+        Text {
+          text: "Dock"
+          anchors.verticalCenter: parent.verticalCenter
+          color: Util.alpha(Color.foreground, 0.52)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        UtilityButton {
+          label: root.autoHideEnabled ? "Hiding on" : "Hiding off"
+          action: "toggleAutoHide"
+          width: 104
+        }
+        UtilityButton { label: "Bottom"; action: "setSideBottom"; selected: root.dockSide === "bottom"; width: 78 }
+        UtilityButton { label: "Left"; action: "setSideLeft"; selected: root.dockSide === "left"; width: 64 }
+        UtilityButton { label: "Right"; action: "setSideRight"; selected: root.dockSide === "right"; width: 68 }
+
+        Item { width: 1; height: 1 }
+
+      }
+    }
+  }
+
+  component UtilityButton: Rectangle {
+    property string label: ""
+    property string action: ""
+    property bool selected: false
+    property bool danger: false
+    height: 34
+    radius: 9
+    color: utilityMouse.containsMouse
+      ? (danger ? Util.alpha(Color.urgent, 0.18) : Util.alpha(Color.foreground, 0.13))
+      : (selected ? Util.alpha(Color.accent, 0.14) : Util.alpha(Color.foreground, 0.055))
+    border.color: selected ? Util.alpha(Color.accent, 0.60) : "transparent"
+    border.width: 1
+    Text {
+      anchors.centerIn: parent
+      text: label
+      color: danger ? Color.urgent : Color.foreground
+      font.family: Style.font.family
+      font.pixelSize: Style.font.bodySmall
+    }
+    MouseArea {
+      id: utilityMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      onClicked: {
+        root.actionTriggered(action, root.itemData)
       }
     }
   }
@@ -107,14 +233,6 @@ PanelWindow {
     id: dismissSurface
     anchors.fill: parent
     z: -1
-
-    MouseArea {
-      anchors.fill: parent
-      onClicked: root.opened = false
-    }
+    MouseArea { anchors.fill: parent; onClicked: root.opened = false }
   }
-
-  // Keep the menu's input region limited to the card. Outside-click dismissal
-  // is intentionally handled by the shell reload-safe menu state rather than
-  // relying on HyprlandFocusGrab, which is not available in every plugin host.
 }
