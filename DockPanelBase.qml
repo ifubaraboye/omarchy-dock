@@ -1268,6 +1268,14 @@ Item {
     if (customSource) return customSource
     var entry = DockModel.entryFor(id, root.appEntries)
     var iconName = entry.icon || entry.iconName || entry.appIcon || ""
+    // Do not hand the theme's generic placeholder to appLibrary.iconSource:
+    // some shell versions resolve it to a concrete purple/black image before
+    // we can recognize that it was only a placeholder. Known ID fallbacks
+    // still get their mapped icon; unknown apps use OmaDock's neutral mark.
+    if (iconName === "application-x-executable") {
+      var mappedName = IconResolver.resolveIcon(entry)
+      if (mappedName === "application-x-executable") return root.defaultIconSource()
+    }
     if (root.shell && root.shell.appLibrary && iconName && typeof root.shell.appLibrary.iconSource === "function") {
       var resolved = root.shell.appLibrary.iconSource(iconName)
       if (resolved && String(resolved).indexOf("application-x-executable") === -1)
@@ -1278,7 +1286,7 @@ Item {
         if (resolved && String(resolved).indexOf("application-x-executable") === -1)
           return root.nativeIconSourceFor(resolved)
       }
-      return ""
+      return root.defaultIconSource()
     }
     // appLibrary unavailable (Omarchy 4.0.3, see refreshApps()) -- every
     // caller of this function used to dead-end here and fall back to
@@ -1289,7 +1297,12 @@ Item {
     // path -- it resolves via Quickshell.iconPath() directly, which needs no
     // shell facade at all. Do the same here instead of giving up.
     var themeName = IconResolver.resolveIcon(entry)
+    if (themeName === "application-x-executable") return root.defaultIconSource()
     return themeName ? Quickshell.iconPath(themeName, true) : ""
+  }
+
+  function defaultIconSource() {
+    return Util.fileUrl(root.home + "/.config/omarchy/plugins/macos.dock/assets/default-app.svg")
   }
 
   // Theme icons carry their own transparent margin (often only 70-95% painted

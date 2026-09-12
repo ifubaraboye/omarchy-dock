@@ -154,45 +154,46 @@ PanelWindow {
 
   function reloadApps() {
     var query = String(appsField.text).trim().toLowerCase()
+    var list = []
+    var seen = ({})
+
+    function addEntry(entry) {
+      if (!entry) return
+      var id = String(entry.id || entry.desktopId || "").replace(/\.desktop$/, "")
+      if (!id || seen[id]) return
+      var name = String(entry.name || entry.displayName || id)
+      if (query && name.toLowerCase().indexOf(query) === -1
+          && id.toLowerCase().indexOf(query) === -1) return
+      seen[id] = true
+      list.push({ id: id, name: name })
+    }
+
+    // The shell library is useful because it applies Omarchy's hidden-entry
+    // rules and fuzzy ordering, but it is not the complete source of truth in
+    // every shell version. In particular, its scoped facade can lag behind
+    // DesktopEntries while an app has no open window.
     if (root.shell && root.shell.appLibrary) {
       try {
         var rows = root.shell.appLibrary.sortedEntries(String(appsField.text).trim()) || []
-        var list = []
         for (var i = 0; i < rows.length && list.length < 400; i++) {
           var entry = rows[i] && rows[i].entry ? rows[i].entry : (rows[i] || {})
-          var id = String(entry.id || "").replace(/\.desktop$/, "")
-          if (!id) continue
-          list.push({ id: id, name: entry.name || entry.displayName || id })
-        }
-        // A scoped shell facade can expose the library before its first
-        // DesktopEntries refresh. Fall through to the live index instead of
-        // presenting an empty manager during that short window.
-        if (list.length > 0) {
-          root.appRows = list
-          return
+          addEntry(entry)
         }
       } catch (error) {
       }
     }
-    // Omarchy 4.0.3 hands panels a scoped shell facade without appLibrary;
-    // fall back to the desktop-entry index so manage mode still lists apps.
+
+    // Always merge the live desktop-entry index. This includes installed apps
+    // that have no Toplevel/window and also covers shell versions whose
+    // appLibrary facade is unavailable or stale.
     try {
       var values = DesktopEntries.applications.values || []
-      var list = []
-      for (var i = 0; i < values.length && list.length < 400; i++) {
-        var entry = values[i]
-        if (!entry || entry.noDisplay) continue
-        var id = String(entry.id || "").replace(/\.desktop$/, "")
-        if (!id) continue
-        var name = String(entry.name || id)
-        if (query && name.toLowerCase().indexOf(query) === -1
-            && id.toLowerCase().indexOf(query) === -1) continue
-        list.push({ id: id, name: name })
+      for (var j = 0; j < values.length && list.length < 400; j++) {
+        addEntry(values[j])
       }
-      root.appRows = list
     } catch (error) {
-      root.appRows = []
     }
+    root.appRows = list
   }
 
   function openAppPicker(row) {
@@ -285,6 +286,11 @@ PanelWindow {
   Connections {
     target: root.shell && root.shell.appLibrary ? root.shell.appLibrary : null
     function onAppsChanged() { if (root.open && root.mode === "manage") root.reloadApps() }
+  }
+
+  Connections {
+    target: DesktopEntries.applications
+    function onValuesChanged() { if (root.open && root.mode === "manage") root.reloadApps() }
   }
 
   // ---- Surface -------------------------------------------------------------
