@@ -41,21 +41,21 @@ canonical_id() {
 }
 
 search_icons() {
-  local query="$1" payload response
+  local query="$1" payload
   payload="$(python3 -c 'import json, sys; print(json.dumps({"query": sys.argv[1], "searchOptions": {"filters": [], "hitsPerPage": 24, "page": 1, "sort": ["downloads:desc"]}}))' "$query")"
-  response="$("$curl_cmd" -fsSL -A "Mozilla/5.0" --retry 2 --connect-timeout 10 --max-time 30 \
-    --proto '=https' --proto-redir '=https' \
-    -X POST "https://macosicons.com/api/search" -H "Content-Type: application/json" \
-    -d "$payload" 2>/dev/null || true)"
-  python3 - "$response" <<'PY'
+  { "$curl_cmd" -fsSL -A "Mozilla/5.0" --retry 2 --connect-timeout 10 --max-time 30 \
+      --max-filesize "$max_page_size" \
+      --proto '=https' --proto-redir '=https' \
+      -X POST "https://macosicons.com/api/search" -H "Content-Type: application/json" \
+      -d "$payload" 2>/dev/null || true; } | head -c "$max_page_size" | python3 /dev/fd/3 3<<'PY'
 import json, sys
 
-raw = sys.argv[1]
+raw = sys.stdin.read()
 try:
     data = json.loads(raw) if raw else {}
 except (json.JSONDecodeError, TypeError):
     data = {}
-hits = data.get("hits") if isinstance(data, dict) else []
+hits = (data.get("hits") or []) if isinstance(data, dict) else []
 out = []
 for hit in hits:
     if not isinstance(hit, dict) or not hit.get("iOSUrl"):

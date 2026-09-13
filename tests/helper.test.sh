@@ -14,13 +14,16 @@ mkdir -p "$work/home"
 cat > "$work/fake-curl" <<'EOF'
 #!/usr/bin/env bash
 body=""
+max_size=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d) body="$2"; shift 2 ;;
+    --max-filesize) max_size="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 printf '%s' "$body" > "$WORK/call.log"
+printf '%s' "$max_size" > "$WORK/max-size.log"
 cat "$WORK/search.json"
 EOF
 chmod +x "$work/fake-curl"
@@ -50,6 +53,13 @@ assert hit["iOSUrl"].startswith("https://"), hit
 assert hit["lowResPngUrl"], hit
 PY
 grep -q '"query": "figma"' "$work/call.log" || { echo "search body missing query"; exit 1; }
+grep -q '^2M$' "$work/max-size.log" || { echo "search response size limit missing"; exit 1; }
+
+echo "== oversized search response is rejected by curl limit"
+perl -e 'print "x" x (2 * 1024 * 1024 + 1)' > "$work/search.json"
+if HOME="$work/home" "$helper" search oversized > "$work/oversized.json"; then
+  grep -qx '\[\]' "$work/oversized.json" || { echo "oversized response was parsed"; exit 1; }
+fi
 
 echo "== set --file downloads nothing but maps and rounds the icon"
 if command -v magick >/dev/null; then tool="magick"; else tool="convert"; fi

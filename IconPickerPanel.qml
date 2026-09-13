@@ -41,6 +41,7 @@ PanelWindow {
   property int appliedRevision: 0
   property bool pasteVisible: false
   property int gridCell: 112
+  property int searchOutputLimit: 2 * 1024 * 1024
 
   signal backRequested()
 
@@ -113,6 +114,7 @@ PanelWindow {
       return
     }
     root.statusText = "Searching macOSicons"
+    searchProcess.outputTooLarge = false
     searchProcess.command = [root.helperPath, "search", String(query).trim()]
     searchProcess.running = true
   }
@@ -228,9 +230,21 @@ PanelWindow {
 
   Process {
     id: searchProcess
+    property bool outputTooLarge: false
     stdout: StdioCollector {
-      waitForEnd: true
+      waitForEnd: false
+      onDataChanged: {
+        if (!searchProcess.outputTooLarge && data.byteLength > root.searchOutputLimit) {
+          searchProcess.outputTooLarge = true
+          searchProcess.running = false
+        }
+      }
       onStreamFinished: {
+        if (searchProcess.outputTooLarge) {
+          root.results = []
+          root.statusText = "Couldn't reach macOSicons — response too large"
+          return
+        }
         var parsed = IconSearch.parseResponse(text)
         root.results = parsed
         if (parsed.length > 0)
@@ -247,7 +261,9 @@ PanelWindow {
       }
     }
     onExited: function(exitCode) {
-      if (exitCode !== 0 && root.results.length === 0)
+      if (searchProcess.outputTooLarge)
+        root.statusText = "Couldn't reach macOSicons — response too large"
+      else if (exitCode !== 0 && root.results.length === 0)
         root.statusText = "Couldn't reach macOSicons — check your connection"
     }
   }
