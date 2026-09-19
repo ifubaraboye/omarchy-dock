@@ -347,14 +347,10 @@ Item {
 
   function desktopIdForWindow(window) {
     var raw = String(window.appId || window.desktopId || window.className || window.initialClass || "").replace(/\.desktop$/, "")
-    var lower = raw.toLowerCase()
-    for (var i = 0; i < root.appEntries.length; i++) {
-      var entry = root.appEntries[i] || {}
-      var id = String(entry.id || "").replace(/\.desktop$/, "")
-      var name = String(entry.name || "").toLowerCase()
-      if (id && id.toLowerCase() === lower) return id
-      if (name && lower.indexOf(name) !== -1) return id
-    }
+    try {
+      var resolved = DockModel.desktopIdForWindow(raw, root.appEntries)
+      if (resolved) return resolved
+    } catch (error) {}
     return raw
   }
 

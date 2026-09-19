@@ -333,6 +333,38 @@ function insertionIndexFor(cursorX, flow, opts) {
     return flow.length
 }
 
+function isWebAppClass(value) {
+    var v = String(value || "").toLowerCase()
+    if (/^chrome[-_.]/.test(v) || /^chromium[-_.]/.test(v) || /^google-chrome[-_.]/.test(v)) return true
+    if (/__-default(-\d+)?$/.test(v) || /\.-default(-\d+)?$/.test(v)) return true
+    return /^[a-z0-9]+(\.[a-z0-9][a-z0-9-]*)+$/.test(v)
+}
+
+// Resolves a window class/appId to a desktop-entry id. Pass 1 is an exact
+// id match; pass 2 is the legacy Name-substring fallback, gated on
+// isWebAppClass() so short web-app names (e.g. `X`) cannot hijack ordinary
+// classes such as `firefox` (see issue #19). Returns the normalized raw id
+// when nothing matches, mirroring the previous QML fallback.
+function desktopIdForWindow(rawId, entries) {
+    var raw = normalizeId(rawId)
+    var lower = raw.toLowerCase()
+    if (!lower) return ""
+    var list = entries || []
+    for (var i = 0; i < list.length; i++) {
+        var entry = list[i] && list[i].entry ? list[i].entry : (list[i] || {})
+        var id = normalizeId(entry.id || entry.desktopId)
+        if (id && id.toLowerCase() === lower) return id
+    }
+    if (!isWebAppClass(lower)) return raw
+    for (var j = 0; j < list.length; j++) {
+        var candidate = list[j] && list[j].entry ? list[j].entry : (list[j] || {})
+        var candidateId = normalizeId(candidate.id || candidate.desktopId)
+        var name = String(candidate.name || candidate.displayName || "").toLowerCase()
+        if (candidateId && name && lower.indexOf(name) !== -1) return candidateId
+    }
+    return raw
+}
+
 function entryFor(id, entries) {
     var value = normalizeId(id)
     var list = entries || []
@@ -473,6 +505,8 @@ if (typeof module !== "undefined" && module.exports) {
         orderPinned: orderPinned,
         computeLayout: computeLayout,
         insertionIndexFor: insertionIndexFor,
+        isWebAppClass: isWebAppClass,
+        desktopIdForWindow: desktopIdForWindow,
         entryFor: entryFor,
         buildDockItems: buildDockItems,
         hashContent: hashContent,

@@ -335,3 +335,46 @@ test("auto-hide hide→reveal→hide cycle is deterministic", () => {
   s.dockEngaged = true
   assert.equal(model.shouldRevealDock(s), true)
 })
+
+test("isWebAppClass gates browser-generated classes", () => {
+  assert.equal(model.isWebAppClass("firefox"), false)
+  assert.equal(model.isWebAppClass("opencode"), false)
+  assert.equal(model.isWebAppClass("vlc"), false)
+  assert.equal(model.isWebAppClass("google-chrome"), false)
+  assert.equal(model.isWebAppClass("x.com"), true)
+  assert.equal(model.isWebAppClass("web.whatsapp.com"), true)
+  assert.equal(model.isWebAppClass("chrome-web.whatsapp.com__-Default"), true)
+  assert.equal(model.isWebAppClass("chrome-youtube.com__-Default-123"), true)
+})
+
+test("issue #19: short web-app Name does not hijack firefox", () => {
+  const entries = [
+    { id: "firefox", name: "Firefox" },
+    { id: "X", name: "X" },
+  ]
+  assert.equal(model.desktopIdForWindow("firefox", entries), "firefox")
+  assert.equal(model.desktopIdForWindow("opencode", entries), "opencode")
+  assert.equal(model.desktopIdForWindow("vlc", entries), "vlc")
+})
+
+test("issue #19: web-app classes still resolve via Name fallback", () => {
+  const entries = [
+    { id: "firefox", name: "Firefox" },
+    { id: "X", name: "X" },
+    { id: "whatsapp", name: "WhatsApp" },
+  ]
+  assert.equal(model.desktopIdForWindow("x.com", entries), "X")
+  assert.equal(
+    model.desktopIdForWindow("chrome-web.whatsapp.com__-Default", entries),
+    "whatsapp",
+  )
+})
+
+test("desktopIdForWindow prefers exact id over Name fallback", () => {
+  const entries = [
+    { id: "X", name: "Firefox" },
+    { id: "firefox", name: "Firefox" },
+  ]
+  assert.equal(model.desktopIdForWindow("firefox", entries), "firefox")
+  assert.equal(model.desktopIdForWindow("unknown-app", entries), "unknown-app")
+})
