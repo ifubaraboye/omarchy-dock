@@ -428,20 +428,26 @@ function normalizeSide(side) {
     return "bottom"
 }
 
+// Output name ("DP-2"), "focused", or "" for the default (first screen).
+function normalizeScreen(value) {
+    return typeof value === "string" ? value.trim() : ""
+}
+
 function parseSettings(text, fallback) {
     var defaults = fallback || { autoHide: true, dockSide: "bottom" }
     var baseSide = normalizeSide(defaults.dockSide)
-    var base = { autoHide: !!defaults.autoHide, dockSide: baseSide }
+    var base = { autoHide: !!defaults.autoHide, dockSide: baseSide, screen: normalizeScreen(defaults.screen) }
     var source = String(text || "").trim()
     if (!source) return base
     try {
         var parsed = JSON.parse(source)
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
             return base
-        var out = { autoHide: base.autoHide, dockSide: base.dockSide }
+        var out = { autoHide: base.autoHide, dockSide: base.dockSide, screen: base.screen }
         if (typeof parsed.autoHide === "boolean") out.autoHide = parsed.autoHide
         else if (typeof parsed.autoHide === "string") out.autoHide = parsed.autoHide === "true"
         if (parsed.dockSide !== undefined) out.dockSide = normalizeSide(parsed.dockSide)
+        if (parsed.screen !== undefined) out.screen = normalizeScreen(parsed.screen)
         return out
     } catch (error) {
         return base
@@ -451,7 +457,10 @@ function parseSettings(text, fallback) {
 function serializeSettings(settings) {
     var value = settings && typeof settings.autoHide === "boolean" ? settings.autoHide : true
     var side = normalizeSide(settings && settings.dockSide)
-    return JSON.stringify({ version: 1, autoHide: value, dockSide: side }, null, 2) + "\n"
+    var out = { version: 1, autoHide: value, dockSide: side }
+    var screen = normalizeScreen(settings && settings.screen)
+    if (screen) out.screen = screen
+    return JSON.stringify(out, null, 2) + "\n"
 }
 
 function shouldReprocessSettings(content) {
@@ -516,6 +525,7 @@ if (typeof module !== "undefined" && module.exports) {
         parseSettings: parseSettings,
         serializeSettings: serializeSettings,
         normalizeSide: normalizeSide,
+        normalizeScreen: normalizeScreen,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,

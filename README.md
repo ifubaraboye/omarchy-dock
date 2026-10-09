@@ -231,6 +231,7 @@ user-configurable.
 | Setting | Type | Default | Stored in | Description |
 |---|---|---|---|---|
 | `autoHide` | bool | `true` | `dock-settings.json` | Glide off-screen when idle and reveal from the bottom edge. When off, the dock reserves its footprint as an exclusive zone. |
+| `screen` | string | `""` | `dock-settings.json` | Monitor the dock (and the Alt+Tab switcher) appears on: an output name from `hyprctl monitors` such as `"DP-2"`, or `"focused"` to follow the focused monitor. Empty, or an output that is not connected, uses the first screen. |
 | `pinned` | string[] | `[]` | `dock-pinned-macos.json` | App ids pinned to the dock (persists via Pin/Unpin). |
 | `order` | string[] | `[]` | `dock-pinned-macos.json` | Full spatial order of dock items (pinned + running). |
 | custom icon mappings | object | `{}` | `dock-icons.json` | Per-app-id icon override (`file`, `source`, `imageUrl`). Managed via "Get Info…", "Manage Icons…", or `omarchy-dock-icon`. |
@@ -295,4 +296,4 @@ For reference, the companion files with all defaults applied:
 qmllint DockPanel.qml DockItem.qml DockMenu.qml
 ```
 
-The dock is intended for a single primary output and uses the first configured Quickshell screen.
+The dock is intended for a single output. By default it uses the first configured Quickshell screen; set `screen` in `dock-settings.json` to put it on a specific monitor.

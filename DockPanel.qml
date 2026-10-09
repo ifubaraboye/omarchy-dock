@@ -35,7 +35,7 @@ Item {
   PanelWindow {
     id: material
     visible: dock.enabled && !dock.conflictDetected && !dock.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: dock.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Overlay

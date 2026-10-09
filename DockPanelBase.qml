@@ -88,6 +88,10 @@ Item {
   }
   // macOS-style auto-hide. Enabled by default; persisted in dock-settings.json.
   property bool autoHide: true
+  // Which monitor the dock lives on: an output name ("DP-2"), "focused" to
+  // follow the focused monitor, or "" for the first screen. Persisted in
+  // dock-settings.json.
+  property string screenName: ""
   // Dock placement: "bottom" | "left" | "right". Persisted in dock-settings.json.
   property string dockSide: "bottom"
   property bool vertical: root.dockSide !== "bottom"
@@ -227,8 +231,22 @@ Item {
     }
   }
 
+  // Resolve screenName to a screen. Falls back to the first screen when unset
+  // or when the named output is not connected.
+  function resolveScreen() {
+    var screens = Quickshell.screens
+    var want = root.screenName
+    if (want === "focused" && Hyprland.focusedMonitor) want = Hyprland.focusedMonitor.name
+    if (want) {
+      for (var i = 0; i < screens.length; i++) {
+        if (screens[i].name === want) return screens[i]
+      }
+    }
+    return screens.length > 0 ? screens[0] : null
+  }
+
   function saveSettings() {
-    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide })
+    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide, screen: root.screenName })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -1432,6 +1450,7 @@ Item {
         root.autoHide = parsed.autoHide
       }
       if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
+      if (root.screenName !== parsed.screen) root.screenName = parsed.screen
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
     }
@@ -1443,6 +1462,7 @@ Item {
       root.settingsLoaded = true
       root.autoHide = true
       root.dockSide = "bottom"
+      root.screenName = ""
     }
   }
 
@@ -1608,7 +1628,7 @@ Item {
   PanelWindow {
     id: dockWindow
     visible: !root.conflictDetected && root.enabled && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: root.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Top
@@ -2003,7 +2023,7 @@ Item {
   PanelWindow {
     id: dockSpacerWindow
     visible: !root.conflictDetected && root.enabled && !root.autoHide && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: root.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Background
@@ -2032,7 +2052,7 @@ Item {
   PanelWindow {
     id: edgeHotZone
     visible: !root.conflictDetected && root.enabled && root.autoHide && root.dockReady && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: root.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Top
@@ -2078,7 +2098,7 @@ Item {
   PanelWindow {
     id: dragGhostWindow
     visible: root.ghostSource !== ""
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    screen: root.resolveScreen()
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Overlay

@@ -267,6 +267,20 @@ test("settings parse and serialize dockSide", () => {
   assert.equal(model.serializeSettings({ autoHide: true, dockSide: "weird" }).includes('"dockSide": "bottom"'), true)
 })
 
+test("settings parse and serialize screen", () => {
+  assert.equal(model.parseSettings('{"screen":"DP-2"}', {}).screen, "DP-2")
+  assert.equal(model.parseSettings('{"screen":"  DP-2 "}', {}).screen, "DP-2")
+  assert.equal(model.parseSettings('{"screen":"focused"}', {}).screen, "focused")
+  assert.equal(model.parseSettings('{"screen":42}', {}).screen, "")
+  assert.equal(model.parseSettings('{}', {}).screen, "")
+  assert.equal(model.parseSettings('', {}).screen, "")
+  assert.equal(model.parseSettings('not json', { screen: "DP-3" }).screen, "DP-3")
+  const s = model.serializeSettings({ autoHide: true, dockSide: "bottom", screen: "DP-2" })
+  assert.equal(JSON.parse(s).screen, "DP-2")
+  assert.equal(model.parseSettings(s, {}).screen, "DP-2")
+  assert.equal("screen" in JSON.parse(model.serializeSettings({ autoHide: true })), false)
+})
+
 test("settings write guard ignores matching content", () => {
   model.resetSettingsGuard()
   model.markSettingsWritten('{"autoHide":true}\n')
