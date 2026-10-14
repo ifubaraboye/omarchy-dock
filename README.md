@@ -26,6 +26,8 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
   persists in `~/.config/omarchy/dock-settings.json`
 - Tiling window adaptation: when auto-hide is off, it reserves its footprint
   as a Wayland exclusive zone, so tiled windows never overlap it
+- One dock per connected output by default, each centred and sized on its own
+  screen; `screenMode` narrows it to the primary output or a single named one
 
 ## Install
 
@@ -231,6 +233,7 @@ user-configurable.
 | Setting | Type | Default | Stored in | Description |
 |---|---|---|---|---|
 | `autoHide` | bool | `true` | `dock-settings.json` | Glide off-screen when idle and reveal from the bottom edge. When off, the dock reserves its footprint as an exclusive zone. |
+| `screenMode` | string | `"all"` | `dock-settings.json` | Which outputs carry a dock: `"all"` (every connected output), `"primary"` (the first screen only) or an output name from `hyprctl monitors` such as `"DP-1"`. A named output that is not connected falls back to the primary one. |
 | `pinned` | string[] | `[]` | `dock-pinned-macos.json` | App ids pinned to the dock (persists via Pin/Unpin). |
 | `order` | string[] | `[]` | `dock-pinned-macos.json` | Full spatial order of dock items (pinned + running). |
 | custom icon mappings | object | `{}` | `dock-icons.json` | Per-app-id icon override (`file`, `source`, `imageUrl`). Managed via "Get Info…", "Manage Icons…", or `omarchy-dock-icon`. |
@@ -247,6 +250,8 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 | `toggleAutoHide` | — | Toggle auto-hide (persisted) |
 | `setAutoHide` | `true`/`false` | Set auto-hide explicitly (persisted) |
 | `getAutoHide` | — | Print current auto-hide state |
+| `setScreenMode` | `"all"` / `"primary"` / `"DP-1"` | Set which outputs carry a dock (persisted) |
+| `getScreenMode` | — | Print the current screen mode |
 | `altTabNext` | — | Next application in the switcher |
 | `altTabPrev` | — | Previous application in the switcher |
 | `altTabCancel` | — | Dismiss the switcher without changing focus |
@@ -266,7 +271,9 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 ```json
 {
   "version": 1,
-  "autoHide": true
+  "autoHide": true,
+  "dockSide": "bottom",
+  "screenMode": "all"
 }
 ```
 
@@ -295,4 +302,9 @@ For reference, the companion files with all defaults applied:
 qmllint DockPanel.qml DockItem.qml DockMenu.qml
 ```
 
-The dock is intended for a single primary output and uses the first configured Quickshell screen.
+The dock fills every connected output by default, with one layer surface per
+screen placed from that screen's own dimensions. `screenMode` narrows it to one
+output (`"primary"`, or an output name). The dock model stays single: pins,
+order, hover magnification and auto-hide are shared, so all copies show the same
+dock and reveal together. What follows the screen the user acts on is the window
+preview, the drag ghost, the tooltip and the App Switcher.

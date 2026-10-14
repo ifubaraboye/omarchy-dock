@@ -43,7 +43,9 @@ Item {
   // dockHovered is true while cursor is over any icon (hoveredItemId) or over the dock background gaps.
   // Using a binding avoids the fragile manual hover tracking where a MouseArea behind delegates
   // didn't receive hover when an icon was on top, causing hide to arm while still over dock.
-  property bool dockHovered: hoveredItemId !== "" || (mouseArea && mouseArea.containsMouse)
+  // surfaceHovered is published by each screen's dock delegate (mouseArea no
+  // longer lives in this component's scope once one delegate exists per output).
+  property bool dockHovered: hoveredItemId !== "" || root.surfaceHovered
   property bool menuOpen: false
   property bool pickerOpen: false
   property bool enabled: true
@@ -83,6 +85,9 @@ Item {
   Connections {
     target: Quickshell
     function onScreensChanged() {
+      // The live screen list changed (output added/removed/resized): re-resolve
+      // which outputs carry a dock, then re-map the layer surfaces.
+      root.screenRevision++
       root.triggerRemap(false)
     }
   }
@@ -91,6 +96,10 @@ Item {
   // Dock placement: "bottom" | "left" | "right". Persisted in dock-settings.json.
   property string dockSide: "bottom"
   property bool vertical: root.dockSide !== "bottom"
+  // Which outputs the dock occupies: "all" (every connected output, the
+  // default), "primary" (the first screen only) or an output name from
+  // `hyprctl monitors` such as "DP-1". Persisted in dock-settings.json.
+  property string screenMode: "all"
   // Tuning for the macOS glide — not too fast, not sluggish.
   property int hideDelay: 1000
   property int showDelay: 100
@@ -106,6 +115,19 @@ Item {
   // suppressed and must not be scheduled. Extracted to avoid the fragile 5px
   // gap between dockSurface bottom (H-8) and edge strip (H-3).
   property bool dockEngaged: root.dockHovered || root.edgeHovered
+  // ---- Outputs (multi-monitor) -------------------------------------------
+  // One dock surface per connected output is the default; see dockScreens.
+  // Bumped from Quickshell.onScreensChanged so dockScreens re-resolves (the
+  // screen list is a live QML property, not a bindable JS value).
+  property int screenRevision: 0
+  // Output whose dock surface last took pointer input. Tooltips, the window
+  // preview and the drag ghost follow it, and cursorXInRow() maps a hover
+  // through the row of the screen it came from.
+  property string activeScreenName: ""
+  // True while the cursor is inside a screen's dock surface (any output).
+  property bool surfaceHovered: false
+  // Dock row per output name, registered by each screen's delegate.
+  property var rowByScreenName: ({})
   // Slide state for auto-hide. The PanelWindow stays mapped when enabled;
   // this flag drives the bottomMargin translation so the glide is animated.
   property bool autoHidden: false
@@ -118,14 +140,72 @@ Item {
   property real hideShift: (root.autoHide && root.autoHidden) ? root.bottomMargin + root.dockHeight - root.peekPx : 0
   property real surfaceWidth: root.vertical ? root.dockHeight : root.layoutWidth
   property real surfaceHeight: root.vertical ? root.layoutWidth : root.dockHeight
-  property real surfaceX: {
-    if (root.dockSide === "left") return root.bottomMargin - root.hideShift
-    if (root.dockSide === "right") return dockWindow.width - root.surfaceWidth - root.bottomMargin + root.hideShift
-    return (dockWindow.width - root.surfaceWidth) / 2
+  // Dock surfaces for the outputs we occupy. Every surface is sized and placed
+  // from its own output's dimensions, so a 1920x1200 laptop panel and a
+  // 2560x1440 monitor each get a correctly centred dock.
+  function dockScreensFor(mode) {
+    var all = Quickshell.screens || []
+    var names = DockModel.resolveScreenNames(all, mode)
+    var out = []
+    for (var i = 0; i < names.length; i++) {
+      for (var j = 0; j < all.length; j++) {
+        if (all[j].name === names[i]) { out.push(all[j]); break }
+      }
+    }
+    return out
   }
-  property real surfaceY: {
-    if (root.dockSide === "bottom") return dockWindow.height - root.surfaceHeight - root.bottomMargin + root.hideShift
-    return (dockWindow.height - root.surfaceHeight) / 2
+  readonly property var dockScreens: {
+    root.screenRevision
+    return root.dockScreensFor(root.screenMode)
+  }
+  function screenByName(name) {
+    var all = Quickshell.screens || []
+    for (var i = 0; i < all.length; i++) if (all[i].name === name) return all[i]
+    return all.length > 0 ? all[0] : null
+  }
+  readonly property var activeScreen: root.screenByName(root.activeScreenName)
+  // The App Switcher opens on the monitor Hyprland has focused, not on a fixed
+  // output: that is where the user is looking when they hit ALT+TAB.
+  function focusedScreen() {
+    var name = Hyprland.focusedMonitor ? String(Hyprland.focusedMonitor.name) : ""
+    return root.screenByName(name)
+  }
+  // Dock surface position on one output, in that output's own coordinates.
+  function surfaceForScreen(screen) {
+    if (!screen) return { x: 0, y: 0 }
+    return DockModel.surfaceFor(root.dockSide, screen.width, screen.height,
+      root.surfaceWidth, root.surfaceHeight, root.bottomMargin, root.hideShift)
+  }
+  // Kept for the parts that are not per-output windows (window preview, the
+  // glass layer's fallback): they describe the dock on the active output.
+  readonly property real surfaceX: root.surfaceForScreen(root.activeScreen).x
+  readonly property real surfaceY: root.surfaceForScreen(root.activeScreen).y
+  // A rotated dock row's window axis cannot be reproduced by arithmetic here,
+  // so each delegate registers its row and hover coordinates are mapped
+  // through the row of the output they came from.
+  function registerRow(screenName, item) {
+    if (!screenName) return
+    var next = {}
+    for (var key in root.rowByScreenName) next[key] = root.rowByScreenName[key]
+    next[screenName] = item
+    root.rowByScreenName = next
+  }
+  function unregisterRow(screenName) {
+    var next = {}
+    for (var key in root.rowByScreenName) if (key !== screenName) next[key] = root.rowByScreenName[key]
+    root.rowByScreenName = next
+  }
+  readonly property var activeRow: {
+    if (root.activeScreenName && root.rowByScreenName[root.activeScreenName])
+      return root.rowByScreenName[root.activeScreenName]
+    var screens = root.dockScreens
+    for (var i = 0; i < screens.length; i++)
+      if (root.rowByScreenName[screens[i].name]) return root.rowByScreenName[screens[i].name]
+    return null
+  }
+  function markActiveScreen(name) {
+    if (!name || root.activeScreenName === name) return
+    root.activeScreenName = name
   }
   property int iconSize: 50
   property real hoveredMouseX: -1
@@ -167,7 +247,10 @@ Item {
   property var placements: ({})
   property real layoutWidth: 0
   property var visualCache: ({})
-  property var delegateById: ({})
+  // Delegate registry: one wrapper per item PER OUTPUT, so layout, drag and
+  // bounce state reach every screen's copy of the dock, not just whichever
+  // delegate happened to register last.
+  property var delegatesById: ({})
   property string ghostSource: ""
   property real ghostX: 0
   property real ghostY: 0
@@ -212,6 +295,12 @@ Item {
       root.dockSide = side
     }
     function getDockSide(): string { return root.dockSide }
+    function setScreenMode(value: string): string {
+      var mode = DockModel.normalizeScreenMode(value)
+      if (mode !== root.screenMode) root.screenMode = mode
+      return root.screenMode
+    }
+    function getScreenMode(): string { return root.screenMode }
     function cycleDockSide(): string {
       var order = ["bottom", "left", "right"]
       var idx = order.indexOf(root.dockSide)
@@ -222,13 +311,32 @@ Item {
     function bounceDebug(id: string): void {
       root.triggerLaunchBounce(id)
     }
+    // Multi-output state, in one line: which outputs carry a dock, how many
+    // delegate copies each item has registered, and which one last took input.
+    function screenState(): string {
+      var counts = {}
+      for (var id in root.delegatesById) counts[id] = root.delegatesById[id].length
+      return JSON.stringify({
+        mode: root.screenMode,
+        screens: root.dockScreens.map(function(s) { return s.name }),
+        rows: Object.keys(root.rowByScreenName),
+        activeScreen: root.activeScreenName,
+        hover: {
+          item: root.hoveredItemId,
+          x: root.hoveredMouseX,
+          surface: root.surfaceHovered,
+          tooltip: root.tooltipVisible
+        },
+        delegates: counts
+      })
+    }
     function bounceState(): string {
       return JSON.stringify({ bouncing: root.bouncingIds })
     }
   }
 
   function saveSettings() {
-    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide })
+    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide, screenMode: root.screenMode })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -246,6 +354,8 @@ Item {
     root.applyLayout()
     root.saveSettings()
   }
+
+  onScreenModeChanged: root.saveSettings()
 
   // Central helper: build the state snapshot consumed by the pure helpers.
   function hideState() {
@@ -498,11 +608,14 @@ Item {
 
   function cursorXInRow() {
     if (root.hoveredMouseX < 0) return -1
-    // dockRow is rotated -90° for left/right docks, so hoveredMouseX (the
-    // window coordinate along the dock) must be fed into the matching slot
-    // for mapFromItem to resolve it to the row's x axis.
-    if (root.vertical) return dockRow.mapFromItem(null, 0, root.hoveredMouseX).x
-    return dockRow.mapFromItem(null, root.hoveredMouseX, 0).x
+    // The row belongs to the output the hover came from: with one dock per
+    // screen, mapping through another screen's row would land on the wrong
+    // slot. A rotated (-90°) row cannot be inverted arithmetically, so use the
+    // registered row of the active screen.
+    var row = root.activeRow
+    if (!row) return -1
+    if (root.vertical) return row.mapFromItem(null, 0, root.hoveredMouseX).x
+    return row.mapFromItem(null, root.hoveredMouseX, 0).x
   }
 
   // Leaving the dock over a gap or the surface padding never triggers a
@@ -514,15 +627,33 @@ Item {
     root.applyLayout()
   }
 
-  function registerItem(id, item) { root.delegateById[id] = item }
-  function unregisterItem(id) {
-    delete root.delegateById[id]
+  function registerItem(id, item) {
+    var list = root.delegatesById[id] || []
+    if (list.indexOf(item) !== -1) return
+    root.delegatesById[id] = list.concat([item])
+  }
+  function unregisterItem(id, item) {
+    var list = root.delegatesById[id]
+    if (list) {
+      var index = list.indexOf(item)
+      if (index !== -1) {
+        var next = list.slice()
+        next.splice(index, 1)
+        if (next.length === 0) delete root.delegatesById[id]
+        else root.delegatesById[id] = next
+      }
+    }
     var i = root.bouncingIds.indexOf(id)
     if (i !== -1) {
-      var next = root.bouncingIds.slice()
-      next.splice(i, 1)
-      root.bouncingIds = next
+      var nextBouncing = root.bouncingIds.slice()
+      nextBouncing.splice(i, 1)
+      root.bouncingIds = nextBouncing
     }
+  }
+  function delegatesFor(id) { return root.delegatesById[id] || [] }
+  function eachDelegate(id, fn) {
+    var list = root.delegatesFor(id)
+    for (var i = 0; i < list.length; i++) fn(list[i])
   }
 
   // ---- Launch bounce (macOS "animate opening applications") ----------------
@@ -538,14 +669,18 @@ Item {
     // of animating where nobody can see it properly.
     if (!root.enabled || (root.autoHide && root.autoHidden)) return
     if (root.bouncingIds.indexOf(id) !== -1) return
-    var d = root.delegateById[id]
-    if (d && typeof d.playBounce === "function") {
+    var list = root.delegatesFor(id)
+    if (list.length > 0) {
       root.bouncingIds = root.bouncingIds.concat([id])
       // playBounce returns false when gated (animation disabled / dragging);
       // drop the guard immediately so it cannot leak without a finish signal.
-      var started = d.playBounce()
+      // Every output shows the same dock, so every copy bounces.
+      var started = false
+      for (var i = 0; i < list.length; i++) {
+        if (typeof list[i].playBounce === "function" && list[i].playBounce()) started = true
+      }
       if (!started) root.finishLaunchBounce(id)
-    } else if (!d) {
+    } else {
       // Delegate does not exist yet (newly appearing app): record the intent
       // and Component.onCompleted auto-plays on creation.
       root.bouncingIds = root.bouncingIds.concat([id])
@@ -558,18 +693,19 @@ Item {
       next.splice(i, 1)
       root.bouncingIds = next
     }
-    var d = root.delegateById[id]
-    if (d) d.bounceOffset = 0
+    root.eachDelegate(id, function(d) { d.bounceOffset = 0 })
   }
   function cancelLaunchBounce(id) {
     if (!id) return
-    var d = root.delegateById[id]
-    if (d && typeof d.cancelBounce === "function") d.cancelBounce()
-    else if (d) d.bounceOffset = 0
-    var i = root.bouncingIds.indexOf(id)
-    if (i !== -1) {
+    var list = root.delegatesFor(id)
+    for (var i = 0; i < list.length; i++) {
+      if (typeof list[i].cancelBounce === "function") list[i].cancelBounce()
+      else list[i].bounceOffset = 0
+    }
+    var j = root.bouncingIds.indexOf(id)
+    if (j !== -1) {
       var next = root.bouncingIds.slice()
-      next.splice(i, 1)
+      next.splice(j, 1)
       root.bouncingIds = next
     }
   }
@@ -612,19 +748,20 @@ Item {
     root.layoutWidth = result.totalWidth
     for (var id in result.placements) {
       var p = result.placements[id]
-      var d = root.delegateById[id]
-      if (!d) continue
-      d.x = p.x
-      d.targetScale = p.scale
-      // Side docks grow inward through the transform origin; a vertical
-      // translation here would make the icon drift along the edge instead.
-      d.targetLift = root.vertical ? 0 : p.lift
-      d.targetOpacity = (id === root.floatingId) ? 0 : (p.phantom ? 0.45 : 1)
+      var list = root.delegatesFor(id)
+      for (var i = 0; i < list.length; i++) {
+        var d = list[i]
+        d.x = p.x
+        d.targetScale = p.scale
+        // Side docks grow inward through the transform origin; a vertical
+        // translation here would make the icon drift along the edge instead.
+        d.targetLift = root.vertical ? 0 : p.lift
+        d.targetOpacity = (id === root.floatingId) ? 0 : (p.phantom ? 0.45 : 1)
+      }
     }
     // The dragged item is excluded from the flow so it has no placement; hide
     // its dock copy while the ghost follows the cursor.
-    if (root.floatingId && root.delegateById[root.floatingId])
-      root.delegateById[root.floatingId].targetOpacity = 0
+    root.eachDelegate(root.floatingId, function(d) { d.targetOpacity = 0 })
   }
 
   function checkDockConflict() {
@@ -941,9 +1078,11 @@ Item {
     }
     root.hoveredMouseX = root.vertical ? position.y : position.x
     root.hidePreview()
+    // The dock surface's own size, not a delegate's: this runs for whichever
+    // output received the drag.
     root.dragInsideDock =
-      surfacePosition.x >= 0 && surfacePosition.x <= dockSurface.width &&
-      surfacePosition.y >= 0 && surfacePosition.y <= dockSurface.height
+      surfacePosition.x >= 0 && surfacePosition.x <= root.surfaceWidth &&
+      surfacePosition.y >= 0 && surfacePosition.y <= root.surfaceHeight
     var half = root.iconSize * root.ghostScale / 2
     root.ghostX = position.x - half + (root.vertical ? (root.dockSide === "left" ? 30 : -30) : 0)
     root.ghostY = position.y - half - (root.vertical ? 0 : 30)
@@ -959,7 +1098,7 @@ Item {
     // exactly what received the drag instead of a coordinate mapping
     // re-derived at release time.
     var inside = root.dragInsideDock
-    console.log("macos.dock finishDrag", JSON.stringify({ id: id, inside: inside, localX: surfacePosition.x, localY: surfacePosition.y, surfaceW: dockSurface.width, surfaceH: dockSurface.height, cursorX: root.cursorXInRow() }))
+    console.log("macos.dock finishDrag", JSON.stringify({ id: id, inside: inside, localX: surfacePosition.x, localY: surfacePosition.y, surfaceW: root.surfaceWidth, surfaceH: root.surfaceHeight, cursorX: root.cursorXInRow() }))
     var wasPinned = root.pinnedIds.indexOf(id) !== -1
     var persist = false
 
@@ -983,12 +1122,21 @@ Item {
         var dropFlow = DockModel.buildFlow(newOrder, [], "", -1)
         var dropResult = DockModel.computeLayout(dropFlow, root.cursorXInRow(), DockModel.LAYOUT_OPTS)
         var dropP = dropResult.placements[id]
-        var dropDelegate = root.delegateById[id]
+        var dropDelegate = root.delegatesFor(id)[0]
         if (dropP && dropDelegate) {
-          dropDelegate.animating = false
-          dropDelegate.targetOpacity = 1
-          dropDelegate.x = dropP.x
-          dropDelegate.animating = true
+          // Snap the dropped copy straight to its new slot. Without this the
+          // settle spring carries it the whole way from its old slot and swings
+          // back past the drop point before settling. The delegate is invisible
+          // (opacity 0) while floating, so the snap is seamless: it appears
+          // instantly at full opacity exactly where the ghost was, and
+          // applyLayout then assigns the identical x, so no spring runs.
+          var dropList = root.delegatesFor(id)
+          for (var k = 0; k < dropList.length; k++) {
+            dropList[k].animating = false
+            dropList[k].x = dropP.x
+            if (k === 0) dropList[k].targetOpacity = 1
+            dropList[k].animating = true
+          }
         }
       }
       if (wasPinned) {
@@ -1009,11 +1157,11 @@ Item {
 
     // Restore the dragged delegate at full opacity without the 150ms fade so
     // a drop never reads as a blink, regardless of inside/outside.
-    var restoredDelegate = root.delegateById[id]
-    if (restoredDelegate) {
-      restoredDelegate.animating = false
-      restoredDelegate.targetOpacity = 1
-      restoredDelegate.animating = true
+    var restoredDelegates = root.delegatesFor(id)
+    for (var r = 0; r < restoredDelegates.length; r++) {
+      restoredDelegates[r].animating = false
+      restoredDelegates[r].targetOpacity = 1
+      restoredDelegates[r].animating = true
     }
 
     root.floatingId = ""
@@ -1200,7 +1348,7 @@ Item {
     root.previewWindows = next
     if (root.pendingPreviewShow) {
       root.pendingPreviewShow = false
-      root.previewBottomY = dockSurface.y
+      root.previewBottomY = root.surfaceY
       root.previewVisible = true
       root.deferredTooltipItem = root.tooltipItem
       root.tooltipItem = null
@@ -1423,7 +1571,7 @@ Item {
     atomicWrites: true
     printErrors: false
     onLoaded: {
-      var parsed = DockModel.parseSettings(text(), { autoHide: true, dockSide: "bottom" })
+      var parsed = DockModel.parseSettings(text(), { autoHide: true, dockSide: "bottom", screenMode: "all" })
       if (!root.settingsLoaded) {
         root.settingsLoaded = true
         root.autoHide = parsed.autoHide
@@ -1432,6 +1580,7 @@ Item {
         root.autoHide = parsed.autoHide
       }
       if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
+      if (root.screenMode !== parsed.screenMode) root.screenMode = parsed.screenMode
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
     }
@@ -1443,6 +1592,7 @@ Item {
       root.settingsLoaded = true
       root.autoHide = true
       root.dockSide = "bottom"
+      root.screenMode = "all"
     }
   }
 
@@ -1605,246 +1755,267 @@ Item {
     command: ["hyprctl", "eval", "hl.unbind(\"ALT + TAB\") hl.unbind(\"ALT + SHIFT + TAB\") hl.unbind(\"ALT + GRAVE\") hl.unbind(\"ALT + SHIFT + GRAVE\") o.bind(\"ALT + TAB\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + TAB\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\") o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"]
   }
 
-  PanelWindow {
-    id: dockWindow
-    visible: !root.conflictDetected && root.enabled && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.namespace: "macos-dock"
-    anchors { top: true; bottom: true; left: true; right: true }
-    // Anchored to all four edges on purpose: drag-to-reorder and the hover
-    // magnify effect both need pointer coordinates across the whole screen,
-    // not just the dock's own footprint. `mask` narrows hit-testing to
-    // `dockSurface`, but Hyprland's `layer_rule blur` operates on the full
-    // layer geometry regardless of the mask — a `blur = true` rule on this
-    // namespace was measured blurring the ENTIRE monitor behind it, not just
-    // the small visible pill, on any host with Hyprland blur enabled. The
-    // 0.50 alpha tint below is deliberately the only "glass" effect; no
-    // compositor backdrop blur is requested for this namespace or for
-    // "macos-dock-material" in DockPanel.qml, which shares this geometry.
-    mask: Region { item: dockSurface }
+  Variants {
+    model: root.dockScreens
 
-    Rectangle {
-      id: dockSurface
-      x: root.surfaceX
-      y: root.surfaceY
-      width: root.surfaceWidth
-      height: root.surfaceHeight
-      radius: 18
-      color: Util.alpha(Color.background, 0.50)
-      border.color: Util.alpha(Color.foreground, 0.04)
-      border.width: 1
-      opacity: !root.enabled ? 0 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
-
-      // Top edge now matches the other three sides via the 1px border
-      // (0.04) alone — no extra highlight, so the dock reads as a uniform
-      // glass pill instead of a brighter top. Removed the previous 0.10 bar
-      // that made the top brighter than left/right/bottom.
-
-      Behavior on x {
-        NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
-      }
-      Behavior on y {
-        NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
-      }
-      Behavior on width {
-        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
-      }
-      Behavior on height {
-        NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
-      }
-      Behavior on opacity { NumberAnimation { duration: 180 } }
-
-      Item {
-        id: dockRow
-        anchors.centerIn: parent
-        anchors.verticalCenterOffset: 6
-        width: root.layoutWidth - 2 * root.sidePadding
-        height: 70
-        // Left/right docks reuse the horizontal layout engine: the row is
-        // rotated -90° so the x-axis becomes screen-y (first item on top) and
-        // each wrapper counter-rotates +90° to keep icons upright.
-        rotation: root.vertical ? -90 : 0
-
-        Behavior on width {
-          NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
-        }
-        Behavior on rotation {
-          NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
-        }
-
-        Repeater {
-          model: root.dockItems
-          delegate: Item {
-            id: wrapper
-            required property string modelData
-            // The wrapper spans the scaled slot so the centered icon sits at
-            // the slot's visual center — a single magnified icon stays
-            // centered in the dock instead of drifting left.
-            width: root.slotWidth * targetScale
+    delegate: Component {
+      PanelWindow {
+        id: dockWindow
+        required property var modelData
+        // The Repeater below shadows `modelData` with the dock item id, so the
+        // output name is captured once here for the handlers nested inside it.
+        readonly property string outputName: modelData.name
+        visible: !root.conflictDetected && root.enabled && !root.remapping
+        screen: modelData
+        color: "transparent"
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "macos-dock"
+        anchors { top: true; bottom: true; left: true; right: true }
+        // Anchored to all four edges on purpose: drag-to-reorder and the hover
+        // magnify effect both need pointer coordinates across the whole screen,
+        // not just the dock's own footprint. `mask` narrows hit-testing to
+        // `dockSurface`, but Hyprland's `layer_rule blur` operates on the full
+        // layer geometry regardless of the mask — a `blur = true` rule on this
+        // namespace was measured blurring the ENTIRE monitor behind it, not just
+        // the small visible pill, on any host with Hyprland blur enabled. The
+        // 0.50 alpha tint below is deliberately the only "glass" effect; no
+        // compositor backdrop blur is requested for this namespace or for
+        // "macos-dock-material" in DockPanel.qml, which shares this geometry.
+        mask: Region { item: dockSurface }
+    
+        // Publish this output's dock row: cursorXInRow() needs the row belonging to
+        // the screen the hover came from, and only the delegate can reach its own.
+        Component.onCompleted: root.registerRow(modelData.name, dockRow)
+        Component.onDestruction: root.unregisterRow(modelData.name)
+    
+        Rectangle {
+          id: dockSurface
+          x: root.surfaceForScreen(modelData).x
+          y: root.surfaceForScreen(modelData).y
+          width: root.surfaceWidth
+          height: root.surfaceHeight
+          radius: 18
+          color: Util.alpha(Color.background, 0.50)
+          border.color: Util.alpha(Color.foreground, 0.04)
+          border.width: 1
+          opacity: !root.enabled ? 0 : (root.menuOpen || root.pickerOpen || root.dockHovered ? 1 : 0.96)
+    
+          // Top edge now matches the other three sides via the 1px border
+          // (0.04) alone — no extra highlight, so the dock reads as a uniform
+          // glass pill instead of a brighter top. Removed the previous 0.10 bar
+          // that made the top brighter than left/right/bottom.
+    
+          Behavior on x {
+            NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+          }
+          Behavior on y {
+            NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+          }
+          Behavior on width {
+            NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+          }
+          Behavior on height {
+            NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+          }
+          Behavior on opacity { NumberAnimation { duration: 180 } }
+    
+          Item {
+            id: dockRow
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: 6
+            width: root.layoutWidth - 2 * root.sidePadding
             height: 70
-            x: 0
-            rotation: root.vertical ? 90 : 0
-            property bool animating: false
-
-            // Live metadata mirrored from observable root state so a pin or
-            // running toggle updates the delegate in place instead of the
-            // Repeater rebuilding every DockItem.
-            property var liveData: ({
-              id: modelData,
-              name: root.appNameFor(modelData),
-              icon: root.appIconNameFor(modelData),
-              pinned: root.pinnedIds.indexOf(modelData) !== -1,
-              running: root.runningIds.indexOf(modelData) !== -1
-            })
-
-            property alias targetScale: dockItem.targetScale
-            property alias targetLift: dockItem.targetLift
-            property alias targetOpacity: dockItem.targetOpacity
-            property alias bounceOffset: dockItem.bounceOffset
-            function playBounce() { return dockItem.playLaunchBounce() }
-            function cancelBounce() { dockItem.cancelLaunchBounce() }
-
-            Behavior on x {
-              enabled: wrapper.animating
-              SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
+            // Left/right docks reuse the horizontal layout engine: the row is
+            // rotated -90° so the x-axis becomes screen-y (first item on top) and
+            // each wrapper counter-rotates +90° to keep icons upright.
+            rotation: root.vertical ? -90 : 0
+    
+            Behavior on width {
+              NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
             }
-
-            Component.onCompleted: {
-              root.registerItem(modelData, wrapper)
-              var seed = root.seedFor(modelData)
-              x = seed.x
-              targetScale = seed.scale
-              targetLift = seed.lift
-              targetOpacity = (modelData === root.floatingId) ? 0 : 1
-              animating = true
-              // Newly appearing launched app: the bounce intent was recorded
-              // before this delegate existed; play it now that animation is on.
-              if (root.bouncingIds.indexOf(modelData) !== -1 && !dockItem.playLaunchBounce())
-                root.finishLaunchBounce(modelData)
+            Behavior on rotation {
+              NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
             }
-            Component.onDestruction: {
-              root.visualCache[modelData] = { x: x, scale: targetScale, lift: targetLift }
-              root.unregisterItem(modelData)
-            }
-
-            DockItem {
-              id: dockItem
-              anchors.centerIn: parent
-              itemData: wrapper.liveData
-              iconSize: root.iconSize
-              dockSide: root.dockSide
-              animationEnabled: wrapper.animating
-              iconSourceOverride: root.iconSourceFor(modelData)
-              onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
-              onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
-              onLaunchBounceFinished: root.finishLaunchBounce(modelData)
-              onDragMoved: function(draggedItem, position) {
-                root.onDragMoved(draggedItem,
-                  dockItem.mapToItem(null, position.x, position.y),
-                  dockItem.mapToItem(dockSurface, position.x, position.y))
-              }
-              onDragFinished: function(draggedItem, position) {
-                root.finishDrag(draggedItem, dockItem.mapToItem(dockSurface, position.x, position.y))
-              }
-              onTooltipRequested: function(hoveredItem, isVisible, center) {
-                root.tooltipCenterX = root.vertical ? center.y : center.x
-                root.onItemHoverChanged(hoveredItem, isVisible, root.tooltipCenterX)
-                root.showTooltip(hoveredItem, isVisible)
-              }
-              onHoverPointerChanged: function(hoveredItem, isInside, position) {
-                if (isInside) {
-                  root.hoveredItemId = hoveredItem.id
-                  root.hoveredMouseX = root.vertical ? position.y : position.x
-                  root.tooltipCenterX = root.vertical ? position.y : position.x
-                } else if (!root.floatingId && root.hoveredItemId === hoveredItem.id) {
-                  root.hoveredItemId = ""
+    
+            Repeater {
+              model: root.dockItems
+              delegate: Item {
+                id: wrapper
+                required property string modelData
+                // The wrapper spans the scaled slot so the centered icon sits at
+                // the slot's visual center — a single magnified icon stays
+                // centered in the dock instead of drifting left.
+                width: root.slotWidth * targetScale
+                height: 70
+                x: 0
+                rotation: root.vertical ? 90 : 0
+                property bool animating: false
+    
+                // Live metadata mirrored from observable root state so a pin or
+                // running toggle updates the delegate in place instead of the
+                // Repeater rebuilding every DockItem.
+                property var liveData: ({
+                  id: modelData,
+                  name: root.appNameFor(modelData),
+                  icon: root.appIconNameFor(modelData),
+                  pinned: root.pinnedIds.indexOf(modelData) !== -1,
+                  running: root.runningIds.indexOf(modelData) !== -1
+                })
+    
+                property alias targetScale: dockItem.targetScale
+                property alias targetLift: dockItem.targetLift
+                property alias targetOpacity: dockItem.targetOpacity
+                property alias bounceOffset: dockItem.bounceOffset
+                function playBounce() { return dockItem.playLaunchBounce() }
+                function cancelBounce() { dockItem.cancelLaunchBounce() }
+    
+                Behavior on x {
+                  enabled: wrapper.animating
+                  SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
                 }
-                root.applyLayout()
+    
+                Component.onCompleted: {
+                  root.registerItem(modelData, wrapper)
+                  var seed = root.seedFor(modelData)
+                  x = seed.x
+                  targetScale = seed.scale
+                  targetLift = seed.lift
+                  targetOpacity = (modelData === root.floatingId) ? 0 : 1
+                  animating = true
+                  // Newly appearing launched app: the bounce intent was recorded
+                  // before this delegate existed; play it now that animation is on.
+                  if (root.bouncingIds.indexOf(modelData) !== -1 && !dockItem.playLaunchBounce())
+                    root.finishLaunchBounce(modelData)
+                }
+                Component.onDestruction: {
+                  root.visualCache[modelData] = { x: x, scale: targetScale, lift: targetLift }
+                  root.unregisterItem(modelData, wrapper)
+                }
+    
+                DockItem {
+                  id: dockItem
+                  anchors.centerIn: parent
+                  itemData: wrapper.liveData
+                  iconSize: root.iconSize
+                  dockSide: root.dockSide
+                  animationEnabled: wrapper.animating
+                  iconSourceOverride: root.iconSourceFor(modelData)
+                  onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
+                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+                  onLaunchBounceFinished: root.finishLaunchBounce(modelData)
+                  onDragMoved: function(draggedItem, position) {
+                    root.onDragMoved(draggedItem,
+                      dockItem.mapToItem(null, position.x, position.y),
+                      dockItem.mapToItem(dockSurface, position.x, position.y))
+                  }
+                  onDragFinished: function(draggedItem, position) {
+                    root.finishDrag(draggedItem, dockItem.mapToItem(dockSurface, position.x, position.y))
+                  }
+                  onTooltipRequested: function(hoveredItem, isVisible, center) {
+                    root.markActiveScreen(dockWindow.outputName)
+                    root.tooltipCenterX = root.vertical ? center.y : center.x
+                    root.onItemHoverChanged(hoveredItem, isVisible, root.tooltipCenterX)
+                    root.showTooltip(hoveredItem, isVisible)
+                  }
+                  onHoverPointerChanged: function(hoveredItem, isInside, position) {
+                    root.markActiveScreen(dockWindow.outputName)
+                    if (isInside) {
+                      root.hoveredItemId = hoveredItem.id
+                      root.hoveredMouseX = root.vertical ? position.y : position.x
+                      root.tooltipCenterX = root.vertical ? position.y : position.x
+                    } else if (!root.floatingId && root.hoveredItemId === hoveredItem.id) {
+                      root.hoveredItemId = ""
+                    }
+                    root.applyLayout()
+                  }
+                }
               }
+            }
+    
+          }
+    
+          MouseArea {
+            id: mouseArea
+            anchors.fill: parent
+            z: -1
+            acceptedButtons: Qt.LeftButton | Qt.RightButton
+            hoverEnabled: true
+            // This delegate publishes hover for root.dockHovered: only the screen
+            // under the cursor can be hovering, so a plain boolean is enough.
+            onContainsMouseChanged: root.surfaceHovered = containsMouse
+            onEntered: root.markActiveScreen(modelData.name)
+            onExited: {
+              root.maybeScheduleHide()
+            }
+            onPositionChanged: {
+              var hoverPoint = mouseArea.mapToItem(null, mouseX, mouseY)
+              root.hoveredMouseX = root.vertical ? hoverPoint.y : hoverPoint.x
+              root.applyLayout()
+            }
+            onClicked: function(mouse) {
+              if (mouse.button === Qt.RightButton) root.openIconManager()
             }
           }
         }
-
-      }
-
-      MouseArea {
-        id: mouseArea
-        anchors.fill: parent
-        z: -1
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
-        hoverEnabled: true
-        onExited: {
-          root.maybeScheduleHide()
+    
+        Rectangle {
+          visible: root.tooltipVisible && root.tooltipItem !== null && root.activeScreenName === modelData.name
+          z: 20
+          x: {
+            if (root.vertical && root.dockSide === "left") return dockSurface.x + dockSurface.width + 8
+            if (root.vertical) return dockSurface.x - width - 8
+            return Math.max(12, Math.min(root.tooltipCenterX - width / 2, parent.width - width - 12))
+          }
+          y: {
+            if (!root.vertical) return dockSurface.y - height - 8
+            return Math.max(12, Math.min(root.tooltipCenterX - height / 2, parent.height - height - 12))
+          }
+          width: tooltipText.implicitWidth + 20
+          height: 24
+          radius: 8
+          color: Util.alpha(Color.background, 0.88)
+          border.color: Util.alpha(Color.foreground, 0.08)
+          border.width: 1
+          Text {
+            textFormat: Text.PlainText
+            id: tooltipText
+            anchors.centerIn: parent
+            text: root.tooltipItem ? (root.tooltipItem.name || root.tooltipItem.id) : ""
+            color: Color.foreground
+            font.family: Style.font.family
+            font.pixelSize: Style.font.bodySmall
+          }
+          // Subtle stem pointing toward the dock icon.
+          Rectangle {
+            x: {
+              if (root.vertical && root.dockSide === "left") return -4
+              if (root.vertical && root.dockSide === "right") return parent.width - 4
+              return (parent.width - 8) / 2
+            }
+            y: root.vertical ? (parent.height - 8) / 2 : parent.height - 5
+            width: 8
+            height: 8
+            radius: 1
+            color: parent.color
+            border.color: parent.border.color
+            border.width: 1
+            rotation: 45
+          }
         }
-        onPositionChanged: {
-          var hoverPoint = mouseArea.mapToItem(null, mouseX, mouseY)
-          root.hoveredMouseX = root.vertical ? hoverPoint.y : hoverPoint.x
-          root.applyLayout()
+    
+        MouseArea {
+          x: root.vertical ? (root.dockSide === "left" ? 0 : parent.width - 18) : 0
+          y: root.vertical ? 0 : parent.height - 18
+          width: root.vertical ? 18 : parent.width
+          height: root.vertical ? parent.height : 18
+          hoverEnabled: true
+          // Hover here is already covered by the full dockSurface mouseArea
+          // (containsMouse) and by icon hover (hoveredItemId). No manual
+          // dockHovered needed — the binding handles it.
+          onExited: root.clearHover()
         }
-        onClicked: function(mouse) {
-          if (mouse.button === Qt.RightButton) root.openIconManager()
-        }
       }
-    }
-
-    Rectangle {
-      visible: root.tooltipVisible && root.tooltipItem !== null
-      z: 20
-      x: {
-        if (root.vertical && root.dockSide === "left") return dockSurface.x + dockSurface.width + 8
-        if (root.vertical) return dockSurface.x - width - 8
-        return Math.max(12, Math.min(root.tooltipCenterX - width / 2, parent.width - width - 12))
-      }
-      y: {
-        if (!root.vertical) return dockSurface.y - height - 8
-        return Math.max(12, Math.min(root.tooltipCenterX - height / 2, parent.height - height - 12))
-      }
-      width: tooltipText.implicitWidth + 20
-      height: 24
-      radius: 8
-      color: Util.alpha(Color.background, 0.88)
-      border.color: Util.alpha(Color.foreground, 0.08)
-      border.width: 1
-      Text {
-        textFormat: Text.PlainText
-        id: tooltipText
-        anchors.centerIn: parent
-        text: root.tooltipItem ? (root.tooltipItem.name || root.tooltipItem.id) : ""
-        color: Color.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.bodySmall
-      }
-      // Subtle stem pointing toward the dock icon.
-      Rectangle {
-        x: {
-          if (root.vertical && root.dockSide === "left") return -4
-          if (root.vertical && root.dockSide === "right") return parent.width - 4
-          return (parent.width - 8) / 2
-        }
-        y: root.vertical ? (parent.height - 8) / 2 : parent.height - 5
-        width: 8
-        height: 8
-        radius: 1
-        color: parent.color
-        border.color: parent.border.color
-        border.width: 1
-        rotation: 45
-      }
-    }
-
-    MouseArea {
-      x: root.vertical ? (root.dockSide === "left" ? 0 : parent.width - 18) : 0
-      y: root.vertical ? 0 : parent.height - 18
-      width: root.vertical ? 18 : parent.width
-      height: root.vertical ? parent.height : 18
-      hoverEnabled: true
-      // Hover here is already covered by the full dockSurface mouseArea
-      // (containsMouse) and by icon hover (hoveredItemId). No manual
-      // dockHovered needed — the binding handles it.
-      onExited: root.clearHover()
     }
   }
 
@@ -1970,6 +2141,9 @@ Item {
   // far above the dock surface without touching the dock's layout or model.
   WindowPreviewPanel {
     id: previewPanel
+    // Above the dock that was actually hovered, not screens[0]: the geometry
+    // it is given (dockX/dockY/centerX) is in that output's coordinates.
+    screen: root.activeScreen
     previewVisible: root.previewVisible && !root.floatingId && !root.menuOpen
     windowList: root.previewWindows
     centerX: root.previewCenterX
@@ -1988,6 +2162,7 @@ Item {
 
   AltTabPanel {
     id: altTab
+    screen: root.focusedScreen()
     iconSourceFor: function(app) { return root.iconSourceFor(app.id) }
     onActivated: function(appId, appName) { root.activateApp(appId, appName) }
   }
@@ -2000,27 +2175,34 @@ Item {
   // coordinate space drag ghosts and tooltips rely on) untouched; the zone is
   // simply ignored on surfaces anchored to all four edges. When the dock is
   // hidden the spacer unmaps and tiled windows reclaim the space.
-  PanelWindow {
-    id: dockSpacerWindow
-    visible: !root.conflictDetected && root.enabled && !root.autoHide && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.layer: WlrLayer.Background
-    WlrLayershell.namespace: "macos-dock-spacer"
-    WlrLayershell.exclusiveZone: root.autoHide ? 0 : (root.enabled ? root.dockHeight + root.bottomMargin : 0)
-    // The exclusive zone is edge-anchored so tiled windows avoid the dock
-    // footprint on whichever side the dock currently lives. Anchors are
-    // assigned plain booleans (never undefined), so each side commits a
-    // complete, non-conflicting anchor set that reliably detaches the
-    // previous one. PanelWindow has no state machine, so no states here.
-    anchors.top: root.dockSide !== "bottom"
-    anchors.bottom: true
-    anchors.left: root.dockSide !== "right"
-    anchors.right: root.dockSide === "right"
-    implicitWidth: root.dockSide === "bottom" ? 0 : root.dockHeight + root.bottomMargin
-    implicitHeight: root.dockSide === "bottom" ? root.dockHeight + root.bottomMargin : 0
-    mask: Region {}
+  Variants {
+    model: root.dockScreens
+
+    delegate: Component {
+      PanelWindow {
+        id: dockSpacerWindow
+        required property var modelData
+        visible: !root.conflictDetected && root.enabled && !root.autoHide && !root.remapping
+        screen: modelData
+        color: "transparent"
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Background
+        WlrLayershell.namespace: "macos-dock-spacer"
+        WlrLayershell.exclusiveZone: root.autoHide ? 0 : (root.enabled ? root.dockHeight + root.bottomMargin : 0)
+        // The exclusive zone is edge-anchored so tiled windows avoid the dock
+        // footprint on whichever side the dock currently lives. Anchors are
+        // assigned plain booleans (never undefined), so each side commits a
+        // complete, non-conflicting anchor set that reliably detaches the
+        // previous one. PanelWindow has no state machine, so no states here.
+        anchors.top: root.dockSide !== "bottom"
+        anchors.bottom: true
+        anchors.left: root.dockSide !== "right"
+        anchors.right: root.dockSide === "right"
+        implicitWidth: root.dockSide === "bottom" ? 0 : root.dockHeight + root.bottomMargin
+        implicitHeight: root.dockSide === "bottom" ? root.dockHeight + root.bottomMargin : 0
+        mask: Region {}
+      }
+    }
   }
 
   // Edge hot-zone: a 3px invisible strip at the screen bottom that reveals
@@ -2029,43 +2211,51 @@ Item {
   // hit-testing alive while dockWindow's mask is off-screen or gapped (8px).
   // The timer adds a subtle 100ms debounce so accidental brushes don't pop
   // the dock, and edgeHovered participates in hide suppression like dockHovered.
-  PanelWindow {
-    id: edgeHotZone
-    visible: !root.conflictDetected && root.enabled && root.autoHide && root.dockReady && !root.remapping && Quickshell.screens.length > 0
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.layer: WlrLayer.Top
-    WlrLayershell.namespace: "macos-dock-edge"
-    // Full-screen surface on every side; input is limited to the mask below,
-    // exactly like dockWindow, so the hot-zone can never balloon into a
-    // full-screen input grab (the previous conditional-undefined anchors did).
-    anchors.top: true
-    anchors.bottom: true
-    anchors.left: true
-    anchors.right: true
-    mask: Region { item: edgeMouse }
+  Variants {
+    model: root.dockScreens
 
-    Item {
-      id: edgeMouse
-      x: root.dockSide === "bottom" ? 0 : (root.dockSide === "left" ? 0 : parent.width - root.edgeHeight)
-      y: root.dockSide === "bottom" ? parent.height - root.edgeHeight : 0
-      width: root.dockSide === "bottom" ? parent.width : root.edgeHeight
-      height: root.dockSide === "bottom" ? root.edgeHeight : parent.height
-      MouseArea {
-        anchors.fill: parent
-        hoverEnabled: true
-        onEntered: {
-          root.edgeHovered = true
-          if (!root.autoHide) return
-          if (root.autoHidden) showTimer.restart()
-          else hideTimer.stop()
-        }
-        onExited: {
-          root.edgeHovered = false
-          showTimer.stop()
-          // Leaving the edge while dock is still hidden cancels pending show.
-          // Leaving while visible will arm hide via onEdgeHoveredChanged.
+    delegate: Component {
+      PanelWindow {
+        id: edgeHotZone
+        required property var modelData
+        visible: !root.conflictDetected && root.enabled && root.autoHide && root.dockReady && !root.remapping
+        screen: modelData
+        color: "transparent"
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Top
+        WlrLayershell.namespace: "macos-dock-edge"
+        // Full-screen surface on every side; input is limited to the mask below,
+        // exactly like dockWindow, so the hot-zone can never balloon into a
+        // full-screen input grab (the previous conditional-undefined anchors did).
+        anchors.top: true
+        anchors.bottom: true
+        anchors.left: true
+        anchors.right: true
+        mask: Region { item: edgeMouse }
+    
+        Item {
+          id: edgeMouse
+          x: root.dockSide === "bottom" ? 0 : (root.dockSide === "left" ? 0 : parent.width - root.edgeHeight)
+          y: root.dockSide === "bottom" ? parent.height - root.edgeHeight : 0
+          width: root.dockSide === "bottom" ? parent.width : root.edgeHeight
+          height: root.dockSide === "bottom" ? root.edgeHeight : parent.height
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            onEntered: {
+              root.markActiveScreen(modelData.name)
+              root.edgeHovered = true
+              if (!root.autoHide) return
+              if (root.autoHidden) showTimer.restart()
+              else hideTimer.stop()
+            }
+            onExited: {
+              root.edgeHovered = false
+              showTimer.stop()
+              // Leaving the edge while dock is still hidden cancels pending show.
+              // Leaving while visible will arm hide via onEdgeHoveredChanged.
+            }
+          }
         }
       }
     }
@@ -2078,7 +2268,9 @@ Item {
   PanelWindow {
     id: dragGhostWindow
     visible: root.ghostSource !== ""
-    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    // The ghost follows the cursor on the output the drag started on (set by
+    // the dock surface that received it), never on a fixed screen.
+    screen: root.activeScreen
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Overlay
