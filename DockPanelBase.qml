@@ -85,9 +85,11 @@ Item {
   Connections {
     target: Quickshell
     function onScreensChanged() {
-      // The live screen list changed (output added/removed/resized): re-resolve
-      // which outputs carry a dock, then re-map the layer surfaces.
+      // The live screen list changed (output added/removed/resized): drop state
+      // that belonged to an output which is gone, re-resolve which outputs carry
+      // a dock, then re-map the layer surfaces.
       root.screenRevision++
+      root.pruneOutputs()
       root.triggerRemap(false)
     }
   }
@@ -206,6 +208,29 @@ Item {
   function markActiveScreen(name) {
     if (!name || root.activeScreenName === name) return
     root.activeScreenName = name
+  }
+  // Unplugging a monitor destroys that output's delegate, but no destruction
+  // hook runs for it (measured with `hyprctl output remove`: neither
+  // Component.onDestruction nor a MouseArea exit fires). So the registered rows
+  // and the hover state are reconciled against the live screen list instead of
+  // trusted to those handlers: a stale row would be mapped through a destroyed
+  // item by cursorXInRow(), and a stale hover would keep the remaining dock
+  // reading itself as engaged, so it would never auto-hide.
+  function pruneOutputs() {
+    var all = Quickshell.screens || []
+    var live = {}
+    for (var i = 0; i < all.length; i++) live[all[i].name] = true
+    var keep = {}
+    for (var key in root.rowByScreenName) if (live[key]) keep[key] = root.rowByScreenName[key]
+    root.rowByScreenName = keep
+    if (!root.activeScreenName || live[root.activeScreenName]) return
+    root.activeScreenName = ""
+    root.surfaceHovered = false
+    root.hoveredItemId = ""
+    root.hoveredMouseX = -1
+    root.tooltipVisible = false
+    root.tooltipItem = null
+    root.applyLayout()
   }
   property int iconSize: 50
   property real hoveredMouseX: -1
