@@ -11,6 +11,11 @@ A compact, bottom-centered macOS-inspired dock plugin for Omarchy.
 - Pinned application persistence
 - Running-application indicators
 - Pin, unpin, new-window, and close actions
+- Downloads and Trash fixed at the end of the dock (bottom edge of a side
+  dock), after a separator. They are not reorderable pins. Downloads opens
+  the XDG download directory; Trash opens `trash:///` and switches between
+  the empty and full trash icons. Toggle either with `showDownloads` /
+  `showTrash` in `dock-settings.json` (both default to on)
 - Live window previews on hover, with cached thumbnail fallbacks
 - Custom macOSicons, local PNG, and WebP icon overrides
 - Point-and-click icon picker: right-click any app and choose "Get Info…" to
@@ -221,16 +226,19 @@ Changes are watched and applied without restarting the shell. The helper is inst
 
 ## Configuration
 
-The dock keeps all of its state under `~/.config/omarchy/`. Only `autoHide` is
-a persisted *setting*; pins, order, and icon overrides are managed through the
-UI or the icon CLI. Timing, sizes, and geometry are baked in and not yet
-user-configurable.
+The dock keeps all of its state under `~/.config/omarchy/`. `autoHide`,
+`dockSide`, `showDownloads`, and `showTrash` are persisted settings; pins,
+order, and icon overrides are managed through the UI or the icon CLI. Timing,
+sizes, and geometry are baked in and not yet user-configurable.
 
 ### Settings
 
 | Setting | Type | Default | Stored in | Description |
 |---|---|---|---|---|
 | `autoHide` | bool | `true` | `dock-settings.json` | Glide off-screen when idle and reveal from the bottom edge. When off, the dock reserves its footprint as an exclusive zone. |
+| `dockSide` | string | `"bottom"` | `dock-settings.json` | Dock edge: `bottom`, `left`, or `right`. |
+| `showDownloads` | bool | `true` | `dock-settings.json` | Show the Downloads folder after the separator. Opens the XDG download directory. |
+| `showTrash` | bool | `true` | `dock-settings.json` | Show Trash after Downloads. Opens `trash:///` and uses the full icon when Trash is not empty. |
 | `pinned` | string[] | `[]` | `dock-pinned-macos.json` | App ids pinned to the dock (persists via Pin/Unpin). |
 | `order` | string[] | `[]` | `dock-pinned-macos.json` | Full spatial order of dock items (pinned + running). |
 | custom icon mappings | object | `{}` | `dock-icons.json` | Per-app-id icon override (`file`, `source`, `imageUrl`). Managed via "Get Info…", "Manage Icons…", or `omarchy-dock-icon`. |
@@ -266,7 +274,10 @@ All commands are invoked as `omarchy-shell [-q] macos.dock <command>`:
 ```json
 {
   "version": 1,
-  "autoHide": true
+  "autoHide": true,
+  "dockSide": "bottom",
+  "showDownloads": true,
+  "showTrash": true
 }
 ```
 
