@@ -494,11 +494,24 @@ function flagSetting(value, fallback) {
     return true
 }
 
+// Which outputs the dock occupies: "all" (every connected output, the
+// default), "primary" (the first screen only, the pre-multi-output behaviour),
+// or an output name from `hyprctl monitors` such as "DP-1".
+function normalizeScreenMode(value) {
+    if (typeof value !== "string") return "all"
+    var mode = value.trim()
+    if (!mode) return "all"
+    if (mode.toLowerCase() === "primary") return "primary"
+    if (mode.toLowerCase() === "all") return "all"
+    return mode
+}
+
 function parseSettings(text, fallback) {
     var defaults = fallback || {}
     var base = {
         autoHide: defaults.autoHide !== undefined ? !!defaults.autoHide : true,
         dockSide: normalizeSide(defaults.dockSide),
+        screenMode: normalizeScreenMode(defaults.screenMode),
         showDownloads: flagSetting(undefined, defaults.showDownloads),
         showTrash: flagSetting(undefined, defaults.showTrash)
     }
@@ -511,12 +524,14 @@ function parseSettings(text, fallback) {
         var out = {
             autoHide: base.autoHide,
             dockSide: base.dockSide,
+            screenMode: base.screenMode,
             showDownloads: base.showDownloads,
             showTrash: base.showTrash
         }
         if (typeof parsed.autoHide === "boolean") out.autoHide = parsed.autoHide
         else if (typeof parsed.autoHide === "string") out.autoHide = parsed.autoHide === "true"
         if (parsed.dockSide !== undefined) out.dockSide = normalizeSide(parsed.dockSide)
+        if (parsed.screenMode !== undefined) out.screenMode = normalizeScreenMode(parsed.screenMode)
         if (parsed.showDownloads !== undefined) out.showDownloads = flagSetting(parsed.showDownloads, base.showDownloads)
         if (parsed.showTrash !== undefined) out.showTrash = flagSetting(parsed.showTrash, base.showTrash)
         return out
@@ -528,15 +543,56 @@ function parseSettings(text, fallback) {
 function serializeSettings(settings) {
     var value = settings && typeof settings.autoHide === "boolean" ? settings.autoHide : true
     var side = normalizeSide(settings && settings.dockSide)
+    var screenMode = normalizeScreenMode(settings && settings.screenMode)
     var showDownloads = flagSetting(settings && settings.showDownloads, true)
     var showTrash = flagSetting(settings && settings.showTrash, true)
     return JSON.stringify({
         version: 1,
         autoHide: value,
         dockSide: side,
+        screenMode: screenMode,
         showDownloads: showDownloads,
         showTrash: showTrash
     }, null, 2) + "\n"
+}
+
+// Resolve a screen mode against a live screen list (Quickshell.screens in QML,
+// plain arrays in tests) to the output names the dock should occupy. A named
+// output that is not connected, and an empty screen list, fall back the same
+// way the dock always has: the first screen.
+function resolveScreenNames(screens, mode) {
+    var list = screens || []
+    var names = []
+    for (var i = 0; i < list.length; i++) {
+        var screen = list[i]
+        names.push(screen && screen.name ? String(screen.name) : "")
+    }
+    if (names.length === 0) return []
+    var want = normalizeScreenMode(mode)
+    if (want === "all") return names
+    if (want === "primary") return [names[0]]
+    for (var j = 0; j < names.length; j++)
+        if (names[j] === want) return [names[j]]
+    return [names[0]]
+}
+
+// Dock surface top-left corner for one output, in that output's own
+// coordinates. Every per-screen surface (dock, spacer, edge hot-zone, glass
+// layer) derives its position from this one function, so no output can drift
+// from another and a wrong screen size shows up in the tests.
+function surfaceFor(side, winWidth, winHeight, surfaceWidth, surfaceHeight, bottomMargin, hideShift) {
+    var edge = normalizeSide(side)
+    var width = Number(winWidth) || 0
+    var height = Number(winHeight) || 0
+    var w = Number(surfaceWidth) || 0
+    var h = Number(surfaceHeight) || 0
+    var margin = Number(bottomMargin) || 0
+    var shift = Number(hideShift) || 0
+    var x = (width - w) / 2
+    if (edge === "right") x = width - w - margin + shift
+    else if (edge === "left") x = margin - shift
+    var y = edge === "bottom" ? height - h - margin + shift : (height - h) / 2
+    return { x: x, y: y }
 }
 
 function shouldReprocessSettings(content) {
@@ -608,6 +664,9 @@ if (typeof module !== "undefined" && module.exports) {
         parseSettings: parseSettings,
         serializeSettings: serializeSettings,
         normalizeSide: normalizeSide,
+        normalizeScreenMode: normalizeScreenMode,
+        resolveScreenNames: resolveScreenNames,
+        surfaceFor: surfaceFor,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,
