@@ -90,6 +90,9 @@ Item {
   property bool autoHide: true
   // Dock placement: "bottom" | "left" | "right". Persisted in dock-settings.json.
   property string dockSide: "bottom"
+  // Downloads and Trash stay fixed after the separator. Both default on.
+  property bool showDownloads: true
+  property bool showTrash: true
   property bool vertical: root.dockSide !== "bottom"
   // Tuning for the macOS glide — not too fast, not sluggish.
   property int hideDelay: 1000
@@ -228,7 +231,12 @@ Item {
   }
 
   function saveSettings() {
-    var content = DockModel.serializeSettings({ autoHide: root.autoHide, dockSide: root.dockSide })
+    var content = DockModel.serializeSettings({
+      autoHide: root.autoHide,
+      dockSide: root.dockSide,
+      showDownloads: root.showDownloads,
+      showTrash: root.showTrash
+    })
     root.settingsWriteUntil = Date.now() + 2000
     DockModel.markSettingsWritten(content)
     // settingsFile uses atomicWrites: setText writes to a sibling temp and
@@ -246,6 +254,9 @@ Item {
     root.applyLayout()
     root.saveSettings()
   }
+
+  onShowDownloadsChanged: root.applyLayout()
+  onShowTrashChanged: root.applyLayout()
 
   // Central helper: build the state snapshot consumed by the pure helpers.
   function hideState() {
@@ -453,14 +464,18 @@ Item {
 
   function refreshItems() {
     var prevRunning = root.runningIds ? root.runningIds.slice() : []
-    var nextRunning = normalizeRunning()
+    var nextRunning = DockModel.stripSpecialIds(normalizeRunning())
     root.runningIds = nextRunning
+    // Downloads / Trash are not apps. Drop them if a pin file or a window
+    // class ever used those ids, so they cannot be reordered into the row.
+    var pinned = DockModel.stripSpecialIds(root.pinnedIds)
+    if (pinned.join("|") !== (root.pinnedIds || []).join("|")) root.pinnedIds = pinned
     // The session order is authoritative: it preserves drag rearrangements of
     // any app (pinned or running) while dropping apps that closed and
     // appending newly opened ones. Pinned apps stay pinned; running apps are
     // never promoted into the pinned list by dragging.
     var prevOrder = root.dockOrder.join("|")
-    root.dockOrder = DockModel.reconcileDockOrder(root.dockOrder, root.pinnedIds, root.runningIds)
+    root.dockOrder = DockModel.stripSpecialIds(DockModel.reconcileDockOrder(root.dockOrder, root.pinnedIds, root.runningIds))
     // The layout file mirrors the session order; persist it (debounced) when
     // the order changes so a restart restores the exact interleaving. Wait
     // until the pin file has been read so a slow boot never clobbers it.
@@ -606,7 +621,14 @@ Item {
       root.floatingId,
       root.floatingId ? root.tempDrag.index : -1
     )
-    var fullFlow = mainFlow.slice()
+    // The fixed section is appended after every app, including running
+    // unpinned ones. Drag insertion above uses mainFlow only, so a drop can
+    // never land inside the separator, Downloads, or Trash.
+    var fullFlow = DockModel.appendSpecialItems(mainFlow, {
+      showDownloads: root.showDownloads,
+      showTrash: root.showTrash,
+      trashFull: root.trashFull
+    })
     var result = DockModel.computeLayout(fullFlow, cursorX, DockModel.LAYOUT_OPTS)
     root.placements = result.placements
     root.layoutWidth = result.totalWidth
@@ -621,6 +643,7 @@ Item {
       d.targetLift = root.vertical ? 0 : p.lift
       d.targetOpacity = (id === root.floatingId) ? 0 : (p.phantom ? 0.45 : 1)
     }
+    root.syncSpecialVisibility(result.placements)
     // The dragged item is excluded from the flow so it has no placement; hide
     // its dock copy while the ghost follows the cursor.
     if (root.floatingId && root.delegateById[root.floatingId])
@@ -678,6 +701,11 @@ Item {
   function openDownloads() {
     hideTimer.stop()
     Quickshell.execDetached(["xdg-open", root.downloadsPath])
+  }
+
+  // XDG download dir when the session has one, otherwise ~/Downloads.
+  function resolvedDownloadsDirCommand() {
+    return "dir=$(xdg-user-dir DOWNLOAD 2>/dev/null || true); if [ -z \"$dir\" ]; then dir=\"$HOME/Downloads\"; fi; printf '%s' \"$dir\""
   }
 
   function openTrash() {
@@ -926,7 +954,31 @@ Item {
   }
 
   // Drag controller ---------------------------------------------------------
+  function syncSpecialVisibility(placements) {
+    var map = placements || {}
+    if (separatorItem) separatorItem.visible = !!map[DockModel.SEPARATOR_ID]
+    if (downloadsWrapper) downloadsWrapper.visible = !!map[DockModel.DOWNLOADS_ID]
+    if (trashWrapper) trashWrapper.visible = !!map[DockModel.TRASH_ID]
+    // Arm springs after the first snap so the section does not slide in from x=0.
+    if (separatorItem && !separatorItem.animating) separatorItem.animating = true
+    if (downloadsWrapper && !downloadsWrapper.animating) downloadsWrapper.animating = true
+    if (trashWrapper && !trashWrapper.animating) trashWrapper.animating = true
+  }
+
+  function hoverSpecial(item, isInside, position) {
+    if (!item) return
+    if (isInside) {
+      root.hoveredItemId = item.id
+      root.hoveredMouseX = root.vertical ? position.y : position.x
+      root.tooltipCenterX = root.hoveredMouseX
+    } else if (!root.floatingId && root.hoveredItemId === item.id) {
+      root.hoveredItemId = ""
+    }
+    root.applyLayout()
+  }
+
   function onDragMoved(item, position, surfacePosition) {
+    if (item && DockModel.isSpecialId(item.id)) return
     if (!root.floatingId) {
       root.floatingId = item.id
       root.tempDrag = { id: item.id, index: -1 }
@@ -951,6 +1003,12 @@ Item {
   }
 
   function finishDrag(item, surfacePosition) {
+    if (item && DockModel.isSpecialId(item.id)) {
+      root.floatingId = ""
+      root.tempDrag = { id: "", index: -1 }
+      root.ghostSource = ""
+      return
+    }
     var id = item.id
     if (!root.floatingId) return
     // `dragInsideDock` is tracked per-frame in onDragMoved from the cursor's
@@ -1423,7 +1481,9 @@ Item {
     atomicWrites: true
     printErrors: false
     onLoaded: {
-      var parsed = DockModel.parseSettings(text(), { autoHide: true, dockSide: "bottom" })
+      var parsed = DockModel.parseSettings(text(), {
+        autoHide: true, dockSide: "bottom", showDownloads: true, showTrash: true
+      })
       if (!root.settingsLoaded) {
         root.settingsLoaded = true
         root.autoHide = parsed.autoHide
@@ -1431,6 +1491,10 @@ Item {
         if (!DockModel.shouldReprocessSettings(text())) return
         root.autoHide = parsed.autoHide
       }
+      // Apply the special-item toggles before dockSide, whose change handler
+      // writes settings and would otherwise persist the previous values.
+      root.showDownloads = parsed.showDownloads
+      root.showTrash = parsed.showTrash
       if (root.dockSide !== parsed.dockSide) root.dockSide = parsed.dockSide
       // If auto-hide is turned off, ensure the dock is fully revealed.
       if (!root.autoHide) root.autoHidden = false
@@ -1443,6 +1507,8 @@ Item {
       root.settingsLoaded = true
       root.autoHide = true
       root.dockSide = "bottom"
+      root.showDownloads = true
+      root.showTrash = true
     }
   }
 
@@ -1562,6 +1628,7 @@ Item {
     root.refreshApps()
     root.refreshItems()
     if (!helperResolveProcess.running) helperResolveProcess.running = true
+    if (!downloadsDirProcess.running) downloadsDirProcess.running = true
     if (!trashCheckProcess.running) trashCheckProcess.running = true
     // The alt-tab HUD opens/closes on keypresses; Hyprland's default layer
     // fade would add a visible fade-in. Disable compositor animation for
@@ -1768,6 +1835,119 @@ Item {
           }
         }
 
+        // Fixed separator between the reorderable apps and Downloads / Trash.
+        // The row itself rotates on side docks, so this vertical line stays
+        // perpendicular to the dock axis.
+        Item {
+          id: separatorItem
+          visible: false
+          width: root.separatorWidth
+          height: 70
+          x: 0
+          property bool animating: false
+          property real targetScale: 1
+          property real targetLift: 0
+          property real targetOpacity: 1
+          Behavior on x {
+            enabled: separatorItem.animating
+            SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
+          }
+          Rectangle {
+            anchors.centerIn: parent
+            width: 1
+            height: 36
+            radius: 0.5
+            color: Util.alpha(Color.foreground, 0.12)
+          }
+          Component.onCompleted: root.registerItem(DockModel.SEPARATOR_ID, separatorItem)
+          Component.onDestruction: root.unregisterItem(DockModel.SEPARATOR_ID)
+        }
+
+        Item {
+          id: downloadsWrapper
+          visible: false
+          width: root.slotWidth * targetScale
+          height: 70
+          x: 0
+          rotation: root.vertical ? 90 : 0
+          property bool animating: false
+          property alias targetScale: downloadsItem.targetScale
+          property alias targetLift: downloadsItem.targetLift
+          property alias targetOpacity: downloadsItem.targetOpacity
+          Behavior on x {
+            enabled: downloadsWrapper.animating
+            SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
+          }
+          Component.onCompleted: root.registerItem(DockModel.DOWNLOADS_ID, downloadsWrapper)
+          Component.onDestruction: root.unregisterItem(DockModel.DOWNLOADS_ID)
+
+          DockItem {
+            id: downloadsItem
+            anchors.centerIn: parent
+            draggable: false
+            itemData: ({ id: "downloads", name: "Downloads", icon: "folder-download", pinned: false, running: false, special: true })
+            iconSize: root.iconSize
+            dockSide: root.dockSide
+            animationEnabled: downloadsWrapper.animating
+            iconSourceOverride: ""
+            onItemLeftClicked: root.openDownloads()
+            onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+            onTooltipRequested: function(hoveredItem, isVisible, center) {
+              root.tooltipCenterX = root.vertical ? center.y : center.x
+              root.showTooltip(hoveredItem, isVisible)
+            }
+            onHoverPointerChanged: function(hoveredItem, isInside, position) {
+              root.hoverSpecial(hoveredItem, isInside, position)
+            }
+          }
+        }
+
+        Item {
+          id: trashWrapper
+          visible: false
+          width: root.slotWidth * targetScale
+          height: 70
+          x: 0
+          rotation: root.vertical ? 90 : 0
+          property bool animating: false
+          property alias targetScale: trashItem.targetScale
+          property alias targetLift: trashItem.targetLift
+          property alias targetOpacity: trashItem.targetOpacity
+          Behavior on x {
+            enabled: trashWrapper.animating
+            SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
+          }
+          Component.onCompleted: root.registerItem(DockModel.TRASH_ID, trashWrapper)
+          Component.onDestruction: root.unregisterItem(DockModel.TRASH_ID)
+
+          DockItem {
+            id: trashItem
+            anchors.centerIn: parent
+            draggable: false
+            itemData: ({
+              id: "trash",
+              name: "Trash",
+              icon: root.trashFull ? "user-trash-full" : "user-trash",
+              pinned: false,
+              running: false,
+              special: true
+            })
+            iconSize: root.iconSize
+            dockSide: root.dockSide
+            animationEnabled: trashWrapper.animating
+            iconSourceOverride: ""
+            onItemLeftClicked: root.openTrash()
+            onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+            onTooltipRequested: function(hoveredItem, isVisible, center) {
+              root.tooltipCenterX = root.vertical ? center.y : center.x
+              root.showTooltip(hoveredItem, isVisible)
+            }
+            onHoverPointerChanged: function(hoveredItem, isInside, position) {
+              root.hoverSpecial(hoveredItem, isInside, position)
+            }
+          }
+        }
+
       }
 
       MouseArea {
@@ -1908,6 +2088,18 @@ Item {
       onStreamFinished: {
         var resolved = String(text || "").trim()
         if (resolved) root.helperPath = resolved
+      }
+    }
+  }
+
+  Process {
+    id: downloadsDirProcess
+    command: ["bash", "-c", root.resolvedDownloadsDirCommand()]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var dir = String(text || "").trim()
+        if (dir) root.downloadsPath = dir
       }
     }
   }

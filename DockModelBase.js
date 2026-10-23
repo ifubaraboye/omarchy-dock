@@ -2,6 +2,13 @@
 
 var DEFAULT_PINNED = []
 
+// Fixed macOS-style section. These ids are not apps: they never join the
+// pinned list or the reorderable dock order, and the separator always sits
+// after every pinned and running icon.
+var SEPARATOR_ID = "__separator__"
+var DOWNLOADS_ID = "downloads"
+var TRASH_ID = "trash"
+
 var lastWrittenHash = null
 
 var LAYOUT_OPTS = {
@@ -365,6 +372,57 @@ function desktopIdForWindow(rawId, entries) {
     return raw
 }
 
+function isSpecialId(id) {
+    var value = normalizeId(id)
+    return value === SEPARATOR_ID || value === DOWNLOADS_ID || value === TRASH_ID
+}
+
+function stripSpecialIds(ids) {
+    var result = []
+    ;(ids || []).forEach(function(id) {
+        var value = normalizeId(id)
+        if (!value || isSpecialId(value) || result.indexOf(value) !== -1) return
+        result.push(value)
+    })
+    return result
+}
+
+// Downloads and Trash, preceded by the divider. Omitted entirely when both
+// toggles are off so the dock does not keep an empty separator. `trashFull`
+// only swaps the trash icon; the item stays in the same slot.
+function specialSection(options) {
+    var opts = options || {}
+    var showDownloads = opts.showDownloads !== false
+    var showTrash = opts.showTrash !== false
+    if (!showDownloads && !showTrash) return []
+    var items = [{
+        id: SEPARATOR_ID, separator: true, name: "", icon: "",
+        pinned: false, running: false, special: true
+    }]
+    if (showDownloads) items.push({
+        id: DOWNLOADS_ID, name: "Downloads", icon: "folder-download",
+        pinned: false, running: false, special: true
+    })
+    if (showTrash) items.push({
+        id: TRASH_ID, name: "Trash", icon: opts.trashFull ? "user-trash-full" : "user-trash",
+        pinned: false, running: false, special: true
+    })
+    return items
+}
+
+// Appends the fixed section after the app flow. Special ids already present
+// (a stale pin, a drag) are dropped so they cannot sit among apps; the
+// phantom placeholder is left where buildFlow put it.
+function appendSpecialItems(flow, options) {
+    var next = []
+    ;(flow || []).forEach(function(item) {
+        if (!item) return
+        if (!item.phantom && isSpecialId(item.id)) return
+        next.push(item)
+    })
+    return next.concat(specialSection(options))
+}
+
 function entryFor(id, entries) {
     var value = normalizeId(id)
     var list = entries || []
@@ -379,10 +437,11 @@ function entryFor(id, entries) {
     return { id: value, name: pretty || value, icon: "application-x-executable" }
 }
 
-function buildDockItems(pinned, entries, runningIds) {
+function buildDockItems(pinned, entries, runningIds, options) {
     var result = []
-    var running = runningIds || []
-    ;(pinned || []).forEach(function(id) {
+    var pinnedIds = stripSpecialIds(pinned)
+    var running = stripSpecialIds(runningIds || [])
+    pinnedIds.forEach(function(id) {
         var entry = entryFor(id, entries)
         result.push({ id: normalizeId(id), name: entry.name || entry.displayName || id,
             icon: entry.icon || entry.iconName || "", pinned: true,
@@ -392,7 +451,7 @@ function buildDockItems(pinned, entries, runningIds) {
     var unpinned = []
     running.forEach(function(id) {
         var normalized = normalizeId(id)
-        if (!isPinned(pinned, normalized) && unpinned.indexOf(normalized) === -1)
+        if (!isPinned(pinnedIds, normalized) && unpinned.indexOf(normalized) === -1)
             unpinned.push(normalized)
     })
     unpinned.forEach(function(id) {
@@ -400,7 +459,7 @@ function buildDockItems(pinned, entries, runningIds) {
         result.push({ id: id, name: entry.name || entry.displayName || id,
             icon: entry.icon || entry.iconName || "", pinned: false, running: true })
     })
-    return result
+    return appendSpecialItems(result, options)
 }
 
 function hashContent(value) {
@@ -428,20 +487,38 @@ function normalizeSide(side) {
     return "bottom"
 }
 
+function flagSetting(value, fallback) {
+    if (typeof value === "boolean") return value
+    if (typeof value === "string") return value === "true"
+    if (typeof fallback === "boolean") return fallback
+    return true
+}
+
 function parseSettings(text, fallback) {
-    var defaults = fallback || { autoHide: true, dockSide: "bottom" }
-    var baseSide = normalizeSide(defaults.dockSide)
-    var base = { autoHide: !!defaults.autoHide, dockSide: baseSide }
+    var defaults = fallback || {}
+    var base = {
+        autoHide: defaults.autoHide !== undefined ? !!defaults.autoHide : true,
+        dockSide: normalizeSide(defaults.dockSide),
+        showDownloads: flagSetting(undefined, defaults.showDownloads),
+        showTrash: flagSetting(undefined, defaults.showTrash)
+    }
     var source = String(text || "").trim()
     if (!source) return base
     try {
         var parsed = JSON.parse(source)
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
             return base
-        var out = { autoHide: base.autoHide, dockSide: base.dockSide }
+        var out = {
+            autoHide: base.autoHide,
+            dockSide: base.dockSide,
+            showDownloads: base.showDownloads,
+            showTrash: base.showTrash
+        }
         if (typeof parsed.autoHide === "boolean") out.autoHide = parsed.autoHide
         else if (typeof parsed.autoHide === "string") out.autoHide = parsed.autoHide === "true"
         if (parsed.dockSide !== undefined) out.dockSide = normalizeSide(parsed.dockSide)
+        if (parsed.showDownloads !== undefined) out.showDownloads = flagSetting(parsed.showDownloads, base.showDownloads)
+        if (parsed.showTrash !== undefined) out.showTrash = flagSetting(parsed.showTrash, base.showTrash)
         return out
     } catch (error) {
         return base
@@ -451,7 +528,15 @@ function parseSettings(text, fallback) {
 function serializeSettings(settings) {
     var value = settings && typeof settings.autoHide === "boolean" ? settings.autoHide : true
     var side = normalizeSide(settings && settings.dockSide)
-    return JSON.stringify({ version: 1, autoHide: value, dockSide: side }, null, 2) + "\n"
+    var showDownloads = flagSetting(settings && settings.showDownloads, true)
+    var showTrash = flagSetting(settings && settings.showTrash, true)
+    return JSON.stringify({
+        version: 1,
+        autoHide: value,
+        dockSide: side,
+        showDownloads: showDownloads,
+        showTrash: showTrash
+    }, null, 2) + "\n"
 }
 
 function shouldReprocessSettings(content) {
@@ -485,6 +570,9 @@ function shouldRevealDock(state) {
 if (typeof module !== "undefined" && module.exports) {
     module.exports = {
         DEFAULT_PINNED: DEFAULT_PINNED,
+        SEPARATOR_ID: SEPARATOR_ID,
+        DOWNLOADS_ID: DOWNLOADS_ID,
+        TRASH_ID: TRASH_ID,
         LAYOUT_OPTS: LAYOUT_OPTS,
         normalizeId: normalizeId,
         mergeAppEntries: mergeAppEntries,
@@ -508,6 +596,10 @@ if (typeof module !== "undefined" && module.exports) {
         isWebAppClass: isWebAppClass,
         desktopIdForWindow: desktopIdForWindow,
         entryFor: entryFor,
+        isSpecialId: isSpecialId,
+        stripSpecialIds: stripSpecialIds,
+        specialSection: specialSection,
+        appendSpecialItems: appendSpecialItems,
         buildDockItems: buildDockItems,
         hashContent: hashContent,
         shouldReprocess: shouldReprocess,

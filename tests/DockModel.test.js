@@ -108,10 +108,68 @@ test("toggles and reorders pins", () => {
   assert.deepEqual(Array.from(model.reorderPinned(["a", "b", "c"], 0, 2)), ["b", "c", "a"])
 })
 
-test("builds pinned and running items without a separator", () => {
+test("builds pinned and running items with Downloads and Trash after a separator", () => {
   const items = model.buildDockItems(["a"], [{ id: "a", name: "A" }, { id: "b", name: "B" }], ["a", "b"])
   assert.equal(items[0].running, true)
+  assert.equal(items[0].pinned, true)
   assert.equal(items[1].id, "b")
+  assert.equal(items[1].pinned, false)
+  assert.equal(items[1].running, true)
+  assert.deepEqual(Array.from(items.map(item => item.id)), ["a", "b", "__separator__", "downloads", "trash"])
+  assert.equal(items[2].separator, true)
+  assert.equal(items[3].icon, "folder-download")
+  assert.equal(items[3].special, true)
+  assert.equal(items[3].pinned, false)
+  assert.equal(items[4].icon, "user-trash")
+  assert.equal(items[4].running, false)
+})
+
+test("special section stays after apps and honors showDownloads/showTrash", () => {
+  const full = model.appendSpecialItems(model.buildFlow(["a", "downloads", "b"], ["x"], "b", 1), { trashFull: false })
+  assert.deepEqual(Array.from(full.map(item => item.id)), ["a", "__phantom__", "x", "__separator__", "downloads", "trash"])
+  assert.equal(full[3].separator, true)
+  assert.equal(full[4].icon, "folder-download")
+  assert.equal(full[5].icon, "user-trash")
+
+  const fullTrash = model.buildDockItems(["pin"], [], ["run"], { showDownloads: true, showTrash: true, trashFull: true })
+  assert.deepEqual(Array.from(fullTrash.map(item => item.id)), ["pin", "run", "__separator__", "downloads", "trash"])
+  assert.equal(fullTrash[fullTrash.length - 1].icon, "user-trash-full")
+
+  const trashOnly = model.buildDockItems(["a"], [], ["b"], { showDownloads: false, showTrash: true, trashFull: true })
+  assert.deepEqual(Array.from(trashOnly.map(item => item.id)), ["a", "b", "__separator__", "trash"])
+  assert.equal(trashOnly[3].icon, "user-trash-full")
+
+  const downloadsOnly = model.appendSpecialItems([{ id: "a" }], { showDownloads: true, showTrash: false })
+  assert.deepEqual(Array.from(downloadsOnly.map(item => item.id)), ["a", "__separator__", "downloads"])
+
+  const appsOnly = model.buildDockItems(["downloads", "a"], [], ["trash", "b"], { showDownloads: false, showTrash: false })
+  assert.deepEqual(Array.from(appsOnly.map(item => item.id)), ["a", "b"])
+  assert.equal(appsOnly.some(item => item.separator), false)
+})
+
+test("special ids are stripped from the reorderable dock", () => {
+  assert.equal(model.isSpecialId("downloads"), true)
+  assert.equal(model.isSpecialId("trash.desktop"), true)
+  assert.equal(model.isSpecialId("__separator__"), true)
+  assert.equal(model.isSpecialId("firefox"), false)
+  assert.deepEqual(Array.from(model.stripSpecialIds(["firefox", "downloads", "trash", "__separator__", "files"])), ["firefox", "files"])
+})
+
+test("separator keeps its own width and does not magnify", () => {
+  const opts = model.LAYOUT_OPTS
+  const flow = model.appendSpecialItems([{ id: "a" }, { id: "b" }], { showDownloads: true, showTrash: true })
+  const rest = model.computeLayout(flow, -1, opts)
+  const separatorX = opts.slotWidth * 2 + opts.spacing * 2
+  assert.equal(rest.placements.__separator__.x, separatorX)
+  assert.equal(rest.placements.downloads.x, separatorX + opts.separatorWidth + opts.spacing)
+  assert.equal(rest.placements.trash.x, rest.placements.downloads.x + opts.slotWidth + opts.spacing)
+  assert.ok(rest.placements.trash.x > rest.placements.b.x, "specials sit after the apps")
+
+  const center = rest.placements.__separator__.x + opts.separatorWidth / 2
+  const mag = model.computeLayout(flow, center, opts)
+  assert.equal(mag.placements.__separator__.scale, 1)
+  assert.equal(mag.placements.__separator__.lift, 0)
+  assert.equal(mag.placements.a.scale >= 1, true)
 })
 
 test("write guard ignores matching content", () => {
@@ -265,6 +323,30 @@ test("settings parse and serialize dockSide", () => {
   assert.equal(model.parseSettings(s, {}).dockSide, "right")
   assert.equal(model.serializeSettings({ autoHide: true }).includes('"dockSide": "bottom"'), true)
   assert.equal(model.serializeSettings({ autoHide: true, dockSide: "weird" }).includes('"dockSide": "bottom"'), true)
+})
+
+test("settings default showDownloads and showTrash to true", () => {
+  const defaults = model.parseSettings("{}", {})
+  assert.equal(defaults.showDownloads, true)
+  assert.equal(defaults.showTrash, true)
+  assert.equal(model.parseSettings("", { autoHide: true }).showDownloads, true)
+  assert.equal(model.parseSettings('{"showDownloads":false,"showTrash":false}', {}).showDownloads, false)
+  assert.equal(model.parseSettings('{"showDownloads":false,"showTrash":false}', {}).showTrash, false)
+  assert.equal(model.parseSettings('{"showDownloads":"true","showTrash":"false"}', {}).showDownloads, true)
+  assert.equal(model.parseSettings('{"showDownloads":"true","showTrash":"false"}', {}).showTrash, false)
+  const raw = model.serializeSettings({ autoHide: true, dockSide: "left", showDownloads: false, showTrash: true })
+  const parsed = JSON.parse(raw)
+  assert.equal(parsed.showDownloads, false)
+  assert.equal(parsed.showTrash, true)
+  assert.equal(parsed.dockSide, "left")
+  assert.equal(model.parseSettings(raw, { showDownloads: true, showTrash: false }).showDownloads, false)
+  assert.equal(model.parseSettings(raw, { showDownloads: true, showTrash: false }).showTrash, true)
+  assert.equal(model.serializeSettings({ autoHide: true }).includes('"showDownloads": true'), true)
+  assert.equal(model.serializeSettings({ autoHide: true }).includes('"showTrash": true'), true)
+  // Existing files without the keys stay on.
+  assert.equal(model.parseSettings('{"autoHide":false,"dockSide":"right"}', {}).showDownloads, true)
+  assert.equal(model.parseSettings('{"autoHide":false,"dockSide":"right"}', {}).showTrash, true)
+  assert.equal(model.parseSettings('{"autoHide":false,"dockSide":"right"}', {}).autoHide, false)
 })
 
 test("settings write guard ignores matching content", () => {
