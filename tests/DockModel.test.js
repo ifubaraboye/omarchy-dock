@@ -460,3 +460,66 @@ test("desktopIdForWindow prefers exact id over Name fallback", () => {
   assert.equal(model.desktopIdForWindow("firefox", entries), "firefox")
   assert.equal(model.desktopIdForWindow("unknown-app", entries), "unknown-app")
 })
+
+test("parses the screen mode, defaulting to every output", () => {
+  assert.equal(model.parseSettings("{}", {}).screenMode, "all")
+  assert.equal(model.parseSettings("", {}).screenMode, "all")
+  assert.equal(model.parseSettings("not json", {}).screenMode, "all")
+  assert.equal(model.parseSettings('{"screenMode":"primary"}', {}).screenMode, "primary")
+  assert.equal(model.parseSettings('{"screenMode":"DP-1"}', {}).screenMode, "DP-1")
+  assert.equal(model.parseSettings('{"screenMode":"  DP-1  "}', {}).screenMode, "DP-1")
+  assert.equal(model.parseSettings('{"screenMode":"PRIMARY"}', {}).screenMode, "primary")
+  assert.equal(model.parseSettings('{"screenMode":""}', {}).screenMode, "all")
+  assert.equal(model.parseSettings('{"screenMode":42}', {}).screenMode, "all")
+})
+
+test("serializes the screen mode and round-trips it", () => {
+  assert.equal(
+    model.serializeSettings({ autoHide: true, screenMode: "primary" }).includes('"screenMode": "primary"'),
+    true,
+  )
+  assert.equal(
+    model.serializeSettings({ autoHide: true }).includes('"screenMode": "all"'),
+    true,
+  )
+  const s = model.serializeSettings({ autoHide: false, dockSide: "left", screenMode: "DP-2" })
+  assert.equal(model.parseSettings(s, {}).screenMode, "DP-2")
+  assert.equal(model.parseSettings(s, {}).dockSide, "left")
+  assert.equal(model.parseSettings(s, {}).autoHide, false)
+})
+
+test("round-trips every persisted setting together", () => {
+  const settings = {
+    autoHide: false,
+    dockSide: "left",
+    screenMode: "DP-2",
+    showDownloads: false,
+    showTrash: true,
+  }
+  const parsed = model.parseSettings(model.serializeSettings(settings), {})
+  assert.equal(parsed.autoHide, false)
+  assert.equal(parsed.dockSide, "left")
+  assert.equal(parsed.screenMode, "DP-2")
+  assert.equal(parsed.showDownloads, false)
+  assert.equal(parsed.showTrash, true)
+})
+
+test("resolves the screen mode to output names", () => {
+  const screens = [{ name: "eDP-1" }, { name: "DP-1" }]
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "all")), ["eDP-1", "DP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "")), ["eDP-1", "DP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "primary")), ["eDP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "DP-1")), ["DP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames(screens, "DP-9")), ["eDP-1"])
+  assert.deepEqual(Array.from(model.resolveScreenNames([], "all")), [])
+})
+
+test("computes the dock surface position on each output", () => {
+  // surfaceFor lives in another VM realm: compare plain JSON, like the other tests.
+  const at = (...args) => JSON.parse(JSON.stringify(model.surfaceFor(...args)))
+  assert.deepEqual(at("bottom", 1920, 1200, 600, 78, 4, 0), { x: 660, y: 1118 })
+  assert.deepEqual(at("right", 1920, 1200, 78, 600, 4, 0), { x: 1838, y: 300 })
+  assert.deepEqual(at("left", 1920, 1200, 78, 600, 4, 0), { x: 4, y: 300 })
+  assert.deepEqual(at("bottom", 2560, 1440, 600, 78, 4, 0), { x: 980, y: 1358 })
+  assert.deepEqual(at("bottom", 1920, 1200, 600, 78, 4, 82), { x: 660, y: 1200 })
+})
