@@ -62,6 +62,9 @@ PanelWindow {
             visible: status === Image.Ready
           }
           Text {
+            // Falls back to the window's appId when no desktop entry matched,
+            // so this string is client-controlled: force plain text.
+            textFormat: Text.PlainText
             anchors.centerIn: parent
             text: root.itemData && root.itemData.name ? String(root.itemData.name).charAt(0).toUpperCase() : "•"
             color: Color.foreground
@@ -78,6 +81,10 @@ PanelWindow {
           anchors.verticalCenter: parent.verticalCenter
           spacing: 3
           Text {
+            // The app name can come from an unmatched, client-controlled
+            // window appId. AutoText would parse "<img src=...>" and could
+            // fetch remote images from the host shell, so keep it literal.
+            textFormat: Text.PlainText
             text: root.itemData && root.itemData.name ? root.itemData.name : "Application"
             color: Color.foreground
             font.family: Style.font.family
@@ -85,6 +92,7 @@ PanelWindow {
             font.bold: true
           }
           Text {
+            textFormat: Text.PlainText
             text: root.itemData && root.itemData.running ? "Running application" : "Pinned application"
             color: Util.alpha(Color.foreground, 0.52)
             font.family: Style.font.family
@@ -99,7 +107,7 @@ PanelWindow {
           radius: 16
           anchors.verticalCenter: parent.verticalCenter
           color: closeMouse.containsMouse ? Util.alpha(Color.foreground, 0.12) : "transparent"
-          Text { anchors.centerIn: parent; text: "×"; color: Util.alpha(Color.foreground, 0.65); font.pixelSize: 22 }
+          Text { anchors.centerIn: parent; textFormat: Text.PlainText; text: "×"; color: Util.alpha(Color.foreground, 0.65); font.pixelSize: 22 }
           MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; onClicked: root.opened = false }
         }
       }
@@ -107,6 +115,7 @@ PanelWindow {
       Rectangle { width: parent.width; height: 1; color: Util.alpha(Color.foreground, 0.10) }
 
       Text {
+        textFormat: Text.PlainText
         text: "Application actions"
         color: Color.foreground
         font.family: Style.font.family
@@ -139,12 +148,14 @@ PanelWindow {
               anchors.centerIn: parent
               spacing: 8
               Text {
+                textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: modelData.glyph
                 color: actionMouse.containsMouse ? Color.accent : Color.foreground
                 font.pixelSize: 24
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: modelData.label
                 color: Color.foreground
@@ -152,6 +163,7 @@ PanelWindow {
                 font.pixelSize: Style.font.body
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: modelData.detail
                 color: Util.alpha(Color.foreground, 0.45)
@@ -178,6 +190,7 @@ PanelWindow {
         spacing: 8
 
         Text {
+          textFormat: Text.PlainText
           text: "Dock"
           anchors.verticalCenter: parent.verticalCenter
           color: Util.alpha(Color.foreground, 0.52)
@@ -213,6 +226,7 @@ PanelWindow {
     border.color: selected ? Util.alpha(Color.accent, 0.60) : "transparent"
     border.width: 1
     Text {
+      textFormat: Text.PlainText
       anchors.centerIn: parent
       text: label
       color: danger ? Color.urgent : Color.foreground
