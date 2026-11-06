@@ -42,7 +42,7 @@ Item {
     if (root.iconSourceOverride) return root.iconSourceOverride
     var name = IconResolver.resolveIcon(itemData)
     if (String(name) === "application-x-executable")
-      return Util.fileUrl(Quickshell.env("HOME") + "/.config/omarchy/plugins/macos.dock/assets/" + IconResolver.DEFAULT_ICON_ASSET)
+      return Qt.resolvedUrl("assets/" + IconResolver.DEFAULT_ICON_ASSET)
     if (String(name).indexOf("/") === 0) return Util.fileUrl(name)
     if (String(name).indexOf("file:") === 0 || String(name).indexOf("image:") === 0) return name
     return Quickshell.iconPath(name, true)
@@ -72,7 +72,7 @@ Item {
 
   Behavior on opacity {
     enabled: root.animationEnabled
-    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+    NumberAnimation { duration: Style.duration(150); easing.type: Easing.OutCubic }
   }
   opacity: root.targetOpacity
 
@@ -81,12 +81,12 @@ Item {
   // Always finishes at exactly 0 so hover lift positioning is never corrupted.
   SequentialAnimation {
     id: launchBounceAnim
-    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight; duration: 180; easing.type: Easing.OutCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight; to: 0; duration: 170; easing.type: Easing.InCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.55; duration: 150; easing.type: Easing.OutCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.55; to: 0; duration: 150; easing.type: Easing.InCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.25; duration: 140; easing.type: Easing.OutCubic }
-    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.25; to: 0; duration: 160; easing.type: Easing.InOutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight; duration: Style.duration(180); easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight; to: 0; duration: Style.duration(170); easing.type: Easing.InCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.55; duration: Style.duration(150); easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.55; to: 0; duration: Style.duration(150); easing.type: Easing.InCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: 0; to: -root.launchBounceHeight * 0.25; duration: Style.duration(140); easing.type: Easing.OutCubic }
+    NumberAnimation { target: root; property: "bounceOffset"; from: -root.launchBounceHeight * 0.25; to: 0; duration: Style.duration(160); easing.type: Easing.InOutCubic }
     onFinished: {
       root.bounceOffset = 0
       root.launchBounceFinished()

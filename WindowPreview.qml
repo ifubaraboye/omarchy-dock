@@ -56,7 +56,7 @@ Item {
     border.color: root.active ? Util.alpha(Color.accent, 0.85) : Util.alpha(Color.foreground, 0.15)
     border.width: root.active ? 2 : 1
 
-    Behavior on border.color { ColorAnimation { duration: 150 } }
+    Behavior on border.color { ColorAnimation { duration: Style.duration(150); easing.type: Easing.OutCubic } }
     Behavior on scale {
       enabled: root.animationEnabled
       SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 }

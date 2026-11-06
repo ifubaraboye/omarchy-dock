@@ -292,7 +292,8 @@ Item {
   // Prefer the helper shipped with this plugin. The ~/.local/bin symlink is
   // optional, so relying on it leaves the picker stuck in "Searching" on a
   // fresh install where the bundled script is present but the link is not.
-  property string helperPath: root.home + "/.config/omarchy/plugins/macos.dock/scripts/omarchy-dock-icon"
+  readonly property string bundledHelperPath: String(Qt.resolvedUrl("scripts/omarchy-dock-icon")).replace(/^file:\/\//, "")
+  property string helperPath: root.bundledHelperPath
   // Downloads / Trash — fixed special items at the right end, after the separator.
   property string downloadsPath: home + "/Downloads"
   property string trashFilesPath: home + "/.local/share/Trash/files"
@@ -1931,18 +1932,18 @@ Item {
           // that made the top brighter than left/right/bottom.
 
           Behavior on x {
-            NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: Style.duration(root.autoHidden ? root.hideDuration : root.showDuration); easing.type: Easing.OutCubic }
           }
           Behavior on y {
-            NumberAnimation { duration: root.autoHidden ? root.hideDuration : root.showDuration; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: Style.duration(root.autoHidden ? root.hideDuration : root.showDuration); easing.type: Easing.OutCubic }
           }
           Behavior on width {
-            NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
           }
           Behavior on height {
-            NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
           }
-          Behavior on opacity { NumberAnimation { duration: 180 } }
+          Behavior on opacity { NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
 
           Item {
             id: dockRow
@@ -1956,10 +1957,10 @@ Item {
             rotation: root.vertical ? -90 : 0
 
             Behavior on width {
-              NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+              NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
             }
             Behavior on rotation {
-              NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+              NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
             }
 
             Repeater {
@@ -2290,11 +2291,11 @@ Item {
     }
   }
 
-  // Resolve the icon helper: prefer the documented install location, fall
-  // back to PATH. The picker surface shows a clear error if neither exists.
+  // Resolve the icon helper: prefer the bundled script relative to this plugin,
+  // then ~/.local/bin, then PATH.
   Process {
     id: helperResolveProcess
-    command: ["bash", "-c", "if [ -x \"$HOME/.config/omarchy/plugins/macos.dock/scripts/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.config/omarchy/plugins/macos.dock/scripts/omarchy-dock-icon\"; elif [ -x \"$HOME/.local/bin/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.local/bin/omarchy-dock-icon\"; else command -v omarchy-dock-icon || true; fi"]
+    command: ["bash", "-c", "if [ -x \"$1\" ]; then printf '%s' \"$1\"; elif [ -x \"$HOME/.local/bin/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.local/bin/omarchy-dock-icon\"; else command -v omarchy-dock-icon || true; fi", "sh", root.bundledHelperPath]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -2520,7 +2521,7 @@ Item {
       opacity: root.ghostOpacity
       Behavior on x { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
       Behavior on y { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
-      Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+      Behavior on opacity { NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
 
       Rectangle {
         anchors.centerIn: parent
