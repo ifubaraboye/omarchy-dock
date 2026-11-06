@@ -49,7 +49,7 @@ Item {
   }
 
   Behavior on scale {
-    enabled: root.animationEnabled
+    enabled: root.animationEnabled && Style.duration(1) > 0
     SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   scale: root.targetScale
@@ -60,7 +60,7 @@ Item {
   }
 
   Behavior on y {
-    enabled: root.animationEnabled
+    enabled: root.animationEnabled && Style.duration(1) > 0
     SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
   }
   y: -root.targetLift
@@ -94,7 +94,7 @@ Item {
   }
 
   function playLaunchBounce() {
-    if (!root.animationEnabled || root.isDragging) return false
+    if (!root.animationEnabled || root.isDragging || Style.duration(1) === 0) return false
     if (launchBounceAnim.running) return false
     launchBounceAnim.restart()
     return true

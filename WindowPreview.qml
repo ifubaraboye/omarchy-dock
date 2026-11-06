@@ -58,7 +58,7 @@ Item {
 
     Behavior on border.color { ColorAnimation { duration: Style.duration(150); easing.type: Easing.OutCubic } }
     Behavior on scale {
-      enabled: root.animationEnabled
+      enabled: root.animationEnabled && Style.duration(1) > 0
       SpringAnimation { spring: 3.2; damping: 0.29; mass: 1 }
     }
 

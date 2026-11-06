@@ -4,11 +4,14 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import "DockModel.js" as DockModel
 import "IconResolver.js" as IconResolver
 
 Item {
   id: root
+
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 
   property var shell: null
   property var pluginRegistry: null
@@ -2000,7 +2003,7 @@ Item {
                 function cancelBounce() { dockItem.cancelLaunchBounce() }
 
                 Behavior on x {
-                  enabled: wrapper.animating
+                  enabled: wrapper.animating && Style.duration(1) > 0
                   SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
                 }
 
@@ -2076,7 +2079,7 @@ Item {
                 property real targetLift: 0
                 property real targetOpacity: 1
                 Behavior on x {
-                  enabled: separatorItem.animating
+                  enabled: separatorItem.animating && Style.duration(1) > 0
                   SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
                 }
                 Rectangle {
@@ -2113,7 +2116,7 @@ Item {
                 property alias targetLift: specialItem.targetLift
                 property alias targetOpacity: specialItem.targetOpacity
                 Behavior on x {
-                  enabled: specialWrapper.animating
+                  enabled: specialWrapper.animating && Style.duration(1) > 0
                   SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
                 }
                 Component.onCompleted: {
@@ -2131,8 +2134,8 @@ Item {
                   anchors.centerIn: parent
                   draggable: false
                   itemData: specialWrapper.specialId === "downloads"
-                    ? ({ id: "downloads", name: "Downloads", icon: "folder-download", pinned: false, running: false, special: true })
-                    : ({ id: "trash", name: "Trash", icon: root.trashFull ? "user-trash-full" : "user-trash", pinned: false, running: false, special: true })
+                    ? ({ id: "downloads", name: strings.t("special.downloads"), icon: "folder-download", pinned: false, running: false, special: true })
+                    : ({ id: "trash", name: strings.t("special.trash"), icon: root.trashFull ? "user-trash-full" : "user-trash", pinned: false, running: false, special: true })
                   iconSize: root.iconSize
                   dockSide: root.dockSide
                   animationEnabled: specialWrapper.animating
@@ -2519,8 +2522,8 @@ Item {
       width: root.iconSize * root.ghostScale + 16
       height: root.iconSize * root.ghostScale + 16
       opacity: root.ghostOpacity
-      Behavior on x { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
-      Behavior on y { SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
+      Behavior on x { enabled: Style.duration(1) > 0; SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
+      Behavior on y { enabled: Style.duration(1) > 0; SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
       Behavior on opacity { NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
 
       Rectangle {

@@ -1,0 +1,23 @@
+{
+  "menu.application": "Application",
+  "menu.running": "Running application",
+  "menu.pinned": "Pinned application",
+  "menu.actions": "Application actions",
+  "menu.getInfo": "Get Info",
+  "menu.changeIcon": "Change icon",
+  "menu.pin": "Pin",
+  "menu.unpin": "Unpin",
+  "menu.dockPlacement": "Dock placement",
+  "menu.newWindow": "New Window",
+  "menu.openAnother": "Open another",
+  "menu.manageIcons": "Manage Icons",
+  "menu.browseApps": "Browse apps",
+  "menu.dock": "Dock",
+  "menu.hidingOn": "Hiding on",
+  "menu.hidingOff": "Hiding off",
+  "menu.bottom": "Bottom",
+  "menu.left": "Left",
+  "menu.right": "Right",
+  "special.downloads": "Downloads",
+  "special.trash": "Trash"
+}

@@ -215,10 +215,11 @@ PanelWindow {
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
           root.activateSelected(); event.accepted = true; return
         }
-        if (event.key === Qt.Key_Left) {
+        var rKey = (typeof Util !== "undefined" && typeof Util.readingKey === "function") ? Util.readingKey(event) : event.key
+        if (rKey === Qt.Key_Left) {
           root.prev(); event.accepted = true; return
         }
-        if (event.key === Qt.Key_Right) {
+        if (rKey === Qt.Key_Right) {
           root.next(); event.accepted = true; return
         }
       }
