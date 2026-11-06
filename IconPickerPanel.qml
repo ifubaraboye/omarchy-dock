@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "IconResolver.js" as IconResolver
 import "IconSearch.js" as IconSearch
@@ -19,6 +20,8 @@ import "IconSearch.js" as IconSearch
 // hot-reloads changes, so the dock updates without a restart.
 PanelWindow {
   id: root
+
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 
   property bool open: false
   property string mode: "picker" // "picker" | "manage"
@@ -110,10 +113,10 @@ PanelWindow {
 
   function searchingNow(query) {
     if (!root.helperPath) {
-      root.statusText = "Icon helper not found — reinstall the plugin"
+      root.statusText = strings.t("picker.helperNotFound")
       return
     }
-    root.statusText = "Searching macOSicons"
+    root.statusText = strings.t("picker.searching")
     searchProcess.outputTooLarge = false
     searchProcess.command = [root.helperPath, "search", String(query).trim()]
     searchProcess.running = true
@@ -121,34 +124,34 @@ PanelWindow {
 
   function applyResult(item) {
     if (!item || !item.iOSUrl) return
-    root.applyWith([root.helperPath, "set", root.currentAppId, item.iOSUrl], "Icon updated")
+    root.applyWith([root.helperPath, "set", root.currentAppId, item.iOSUrl], strings.t("picker.iconUpdated"))
   }
 
   function applyLocalFile(path) {
     if (!String(path).trim()) return
-    root.applyWith([root.helperPath, "set", root.currentAppId, "--file", path], "Icon updated")
+    root.applyWith([root.helperPath, "set", root.currentAppId, "--file", path], strings.t("picker.iconUpdated"))
   }
 
   function applyPastedUrl() {
     var url = String(pasteField.text).trim()
     if (!/^https?:\/\//.test(url)) {
-      root.statusText = "Enter a full http(s) image URL"
+      root.statusText = strings.t("picker.enterValidUrl")
       return
     }
-    root.applyWith([root.helperPath, "set", root.currentAppId, url], "Icon updated")
+    root.applyWith([root.helperPath, "set", root.currentAppId, url], strings.t("picker.iconUpdated"))
   }
 
   function clearIcon(appId) {
-    root.applyWith([root.helperPath, "clear", appId], "Custom icon cleared")
+    root.applyWith([root.helperPath, "clear", appId], strings.t("picker.iconCleared"))
   }
 
   function applyWith(command, successMessage) {
     if (root.busy || !root.helperPath) {
-      if (!root.helperPath) root.statusText = "Icon helper not found — reinstall the plugin"
+      if (!root.helperPath) root.statusText = strings.t("picker.helperNotFound")
       return
     }
     root.busy = true
-    root.statusText = "Applying"
+    root.statusText = strings.t("picker.applying")
     applyProcess.pendingSuccess = successMessage
     applyProcess.command = command
     applyProcess.running = true
@@ -242,29 +245,29 @@ PanelWindow {
       onStreamFinished: {
         if (searchProcess.outputTooLarge) {
           root.results = []
-          root.statusText = "Couldn't reach macOSicons — response too large"
+          root.statusText = strings.t("picker.responseTooLarge")
           return
         }
         var parsed = IconSearch.parseResponse(text)
         root.results = parsed
         if (parsed.length > 0)
-          root.statusText = parsed.length + " icons found"
+          root.statusText = strings.tn("picker.iconsFound", parsed.length).arg(Commons.I18n.formatNumber(parsed.length))
         else
-          root.statusText = "No matches — try another term"
+          root.statusText = strings.t("picker.noMatches")
       }
     }
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         if (text.trim() && root.results.length === 0)
-          root.statusText = "Couldn't reach macOSicons — check your connection"
+          root.statusText = strings.t("picker.connectionError")
       }
     }
     onExited: function(exitCode) {
       if (searchProcess.outputTooLarge)
-        root.statusText = "Couldn't reach macOSicons — response too large"
+        root.statusText = strings.t("picker.responseTooLarge")
       else if (exitCode !== 0 && root.results.length === 0)
-        root.statusText = "Couldn't reach macOSicons — check your connection"
+        root.statusText = strings.t("picker.connectionError")
     }
   }
 
@@ -284,7 +287,7 @@ PanelWindow {
         root.appliedRevision++
         root.statusText = applyProcess.pendingSuccess
       } else {
-        root.statusText = "Failed — " + (root.applyError || "couldn't complete the change")
+        root.statusText = strings.t("picker.failedWithReason").arg(root.applyError || strings.t("picker.failedGeneric"))
       }
       root.applyError = ""
     }
@@ -294,7 +297,7 @@ PanelWindow {
 
   FileDialog {
     id: fileDialog
-    title: "Choose an image for " + root.currentAppName
+    title: strings.t("picker.chooseImageFor").arg(root.currentAppName)
     nameFilters: ["Images (*.png *.webp)", "All files (*)"]
     onAccepted: root.applyLocalFile(IconSearch.fileUrlToPath(fileDialog.selectedFile))
   }
@@ -389,7 +392,7 @@ PanelWindow {
             Text {
         textFormat: Text.PlainText
               width: parent.width
-              text: root.mode === "picker" ? root.currentAppName : "Icon Manager"
+              text: root.mode === "picker" ? root.currentAppName : strings.t("picker.titleManage")
               elide: Text.ElideRight
               color: Color.foreground
               font.family: Style.font.family
@@ -400,8 +403,8 @@ PanelWindow {
         textFormat: Text.PlainText
               width: parent.width
               text: root.mode === "picker"
-                ? "Change the icon shown for this app"
-                : "Change icons for any installed app"
+                ? strings.t("picker.subtitlePicker")
+                : strings.t("picker.subtitleManage")
               elide: Text.ElideRight
               color: Qt.darker(Color.foreground, 1.5)
               font.family: Style.font.family
@@ -423,7 +426,10 @@ PanelWindow {
             Text {
         textFormat: Text.PlainText
               anchors.centerIn: parent
-              text: root.fromManage ? "‹ All apps" : "‹ Dock menu"
+              text: {
+                var arrow = Commons.I18n.rightToLeft ? "›" : "‹"
+                return root.fromManage ? strings.t("picker.backAllApps").arg(arrow) : strings.t("picker.backDockMenu").arg(arrow)
+              }
               color: Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
@@ -498,7 +504,7 @@ PanelWindow {
             anchors.right: parent.right
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            placeholderText: "Search macOSicons"
+            placeholderText: strings.t("picker.searchPlaceholder")
             placeholderTextColor: Qt.darker(Color.foreground, 1.6)
             color: Color.foreground
             font.family: Style.font.family
@@ -516,7 +522,7 @@ PanelWindow {
             anchors.right: parent.right
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            placeholderText: "Search installed apps"
+            placeholderText: strings.t("picker.searchAppsPlaceholder")
             placeholderTextColor: Qt.darker(Color.foreground, 1.6)
             color: Color.foreground
             font.family: Style.font.family
@@ -542,7 +548,7 @@ PanelWindow {
             anchors.right: pasteApply.left
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            placeholderText: "https:// direct PNG or WebP image URL"
+            placeholderText: strings.t("picker.pasteUrlPlaceholder")
             placeholderTextColor: Qt.darker(Color.foreground, 1.6)
             color: Color.foreground
             font.family: Style.font.family
@@ -563,7 +569,7 @@ PanelWindow {
             Text {
         textFormat: Text.PlainText
               anchors.centerIn: parent
-              text: "Apply"
+              text: strings.t("picker.apply")
               color: Color.background
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
@@ -654,7 +660,7 @@ PanelWindow {
         textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: root.results.length === 0 && root.statusText === ""
-              text: "Type to search macOSicons"
+              text: strings.t("picker.typeToSearch")
               color: Qt.darker(Color.foreground, 1.5)
               font.family: Style.font.family
               font.pixelSize: Style.font.body
@@ -718,7 +724,7 @@ PanelWindow {
                   Text {
         textFormat: Text.PlainText
                     anchors.centerIn: parent
-                    text: "Change"
+                    text: strings.t("picker.change")
                     color: Color.foreground
                     font.family: Style.font.family
                     font.pixelSize: Style.font.bodySmall
@@ -741,7 +747,7 @@ PanelWindow {
                   Text {
         textFormat: Text.PlainText
                     anchors.centerIn: parent
-                    text: "Clear"
+                    text: strings.t("picker.clear")
                     color: Color.foreground
                     font.family: Style.font.family
                     font.pixelSize: Style.font.bodySmall
@@ -769,7 +775,7 @@ PanelWindow {
         textFormat: Text.PlainText
               anchors.centerIn: parent
               visible: root.appRows.length === 0
-              text: String(appsField.text).trim() !== "" ? "No apps match" : "No applications found"
+              text: String(appsField.text).trim() !== "" ? strings.t("picker.noAppsMatch") : strings.t("picker.noAppsFound")
               color: Qt.darker(Color.foreground, 1.5)
               font.family: Style.font.family
               font.pixelSize: Style.font.body
@@ -786,12 +792,12 @@ PanelWindow {
           visible: root.mode === "picker"
 
           ActionButton {
-            text: "Use Your Own Image"
+            text: strings.t("picker.useOwnImage")
             width: 168
             onClicked: fileDialog.open()
           }
           ActionButton {
-            text: "Paste Image URL"
+            text: strings.t("picker.pasteImageUrl")
             width: 138
             onClicked: {
               root.pasteVisible = !root.pasteVisible
@@ -799,7 +805,7 @@ PanelWindow {
             }
           }
           ActionButton {
-            text: "Clear Custom Icon"
+            text: strings.t("picker.clearCustomIcon")
             width: 150
             enabled: root.appHasCustomIcon(root.currentAppId)
             dimmed: !root.appHasCustomIcon(root.currentAppId)
@@ -809,7 +815,7 @@ PanelWindow {
           Item { width: 1; height: 1 }
 
           ActionButton {
-            text: "Done"
+            text: strings.t("picker.done")
             width: 72
             accent: true
             onClicked: root.close()

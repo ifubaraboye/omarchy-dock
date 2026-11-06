@@ -40,7 +40,7 @@ Add and enable the plugin through Omarchy's plugin manager. The plugin's own
 id is `macos.dock` (`manifest.json`'s `id` field), not the repository name:
 
 ```bash
-omarchy plugin add https://github.com/Natykufsky/omarchy-dock.git
+omarchy plugin add https://github.com/ifubaraboye/omarchy-dock.git
 omarchy plugin enable macos.dock
 ```
 
