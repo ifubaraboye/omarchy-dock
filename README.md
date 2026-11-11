@@ -59,9 +59,10 @@ The dock stores pins and auto-hide preference in:
 
 ## Requirements and removal
 
-This plugin requires Omarchy with Quickshell, plus `bash`, `curl`, `python3`,
-ImageMagick (`magick` or `convert` and `identify`), and `xdg-open` for the
-optional custom-icon helper.
+This plugin requires Omarchy 4.5 or newer — it relies on the shell's motion,
+translation, and RTL APIs (`Style.duration`, `Commons.Translations`,
+`Util.readingKey`) — plus `bash`, `curl`, `python3`, ImageMagick (`magick` or
+`convert` and `identify`), and `xdg-open` for the optional custom-icon helper.
 
 For the best experience, use **floating windows** (not tiling): the dock is
 designed to work with a floating layout where windows overlap its surface, and

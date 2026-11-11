@@ -290,12 +290,14 @@ Item {
   property var nativeIconQueue: []
   property var currentNativeIconJob: null
   property int nativeIconRevision: 0
-  // The icon picker helper (~/.local/bin/omarchy-dock-icon) resolved at shell
-  // start; falls back to PATH lookup so the GUI works however it was installed.
-  // Prefer the helper shipped with this plugin. The ~/.local/bin symlink is
-  // optional, so relying on it leaves the picker stuck in "Searching" on a
-  // fresh install where the bundled script is present but the link is not.
-  readonly property string bundledHelperPath: String(Qt.resolvedUrl("scripts/omarchy-dock-icon")).replace(/^file:\/\//, "")
+  // Prefer the helper shipped with this plugin, resolved relative to it so the
+  // picker works whatever the plugin directory is called. The ~/.local/bin
+  // symlink is optional: relying on it leaves the picker stuck in "Searching"
+  // on a fresh install where the bundled script is present but the link is not.
+  readonly property string bundledHelperPath: {
+    var path = String(Qt.resolvedUrl("scripts/omarchy-dock-icon")).replace(/^file:\/\//, "")
+    try { return decodeURIComponent(path) } catch (e) { return path }
+  }
   property string helperPath: root.bundledHelperPath
   // Downloads / Trash — fixed special items at the right end, after the separator.
   property string downloadsPath: home + "/Downloads"
@@ -1551,7 +1553,9 @@ Item {
   }
 
   function defaultIconSource() {
-    return Util.fileUrl(root.home + "/.config/omarchy/plugins/macos.dock/assets/" + IconResolver.DEFAULT_ICON_ASSET)
+    // Resolve beside this QML file for the same reason as bundledHelperPath:
+    // the plugin directory name is not guaranteed to be "macos.dock".
+    return String(Qt.resolvedUrl("assets/" + IconResolver.DEFAULT_ICON_ASSET))
   }
 
   // Theme icons carry their own transparent margin (often only 70-95% painted
@@ -1908,8 +1912,7 @@ Item {
         // namespace was measured blurring the ENTIRE monitor behind it, not just
         // the small visible pill, on any host with Hyprland blur enabled. The
         // 0.50 alpha tint below is deliberately the only "glass" effect; no
-        // compositor backdrop blur is requested for this namespace or for
-        // "macos-dock-material" in DockPanel.qml, which shares this geometry.
+        // compositor backdrop blur is requested for this namespace.
         mask: Region { item: dockSurface }
 
         // Publish this output's dock row: cursorXInRow() needs the row belonging to
