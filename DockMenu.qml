@@ -2,10 +2,13 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 PanelWindow {
   id: root
+
+  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
 
   property var itemData: null
   property string iconSource: ""
@@ -85,7 +88,7 @@ PanelWindow {
             // window appId. AutoText would parse "<img src=...>" and could
             // fetch remote images from the host shell, so keep it literal.
             textFormat: Text.PlainText
-            text: root.itemData && root.itemData.name ? root.itemData.name : "Application"
+            text: root.itemData && root.itemData.name ? root.itemData.name : strings.t("menu.application")
             color: Color.foreground
             font.family: Style.font.family
             font.pixelSize: Style.font.title
@@ -93,7 +96,7 @@ PanelWindow {
           }
           Text {
             textFormat: Text.PlainText
-            text: root.itemData && root.itemData.running ? "Running application" : "Pinned application"
+            text: root.itemData && root.itemData.running ? strings.t("menu.running") : strings.t("menu.pinned")
             color: Util.alpha(Color.foreground, 0.52)
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -116,7 +119,7 @@ PanelWindow {
 
       Text {
         textFormat: Text.PlainText
-        text: "Application actions"
+        text: strings.t("menu.actions")
         color: Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.heading
@@ -130,10 +133,10 @@ PanelWindow {
 
         Repeater {
           model: [
-            { action: "setIcon", label: "Get Info", glyph: "✦", detail: "Change icon" },
-            { action: "togglePin", label: root.itemData && root.itemData.pinned ? "Unpin" : "Pin", glyph: "⌖", detail: "Dock placement" },
-            { action: "newWindow", label: "New Window", glyph: "＋", detail: "Open another" },
-            { action: "manageIcons", label: "Manage Icons", glyph: "▦", detail: "Browse apps" }
+            { action: "setIcon", label: strings.t("menu.getInfo"), glyph: "✦", detail: strings.t("menu.changeIcon") },
+            { action: "togglePin", label: root.itemData && root.itemData.pinned ? strings.t("menu.unpin") : strings.t("menu.pin"), glyph: "⌖", detail: strings.t("menu.dockPlacement") },
+            { action: "newWindow", label: strings.t("menu.newWindow"), glyph: "＋", detail: strings.t("menu.openAnother") },
+            { action: "manageIcons", label: strings.t("menu.manageIcons"), glyph: "▦", detail: strings.t("menu.browseApps") }
           ]
           delegate: Rectangle {
             required property var modelData
@@ -191,7 +194,7 @@ PanelWindow {
 
         Text {
           textFormat: Text.PlainText
-          text: "Dock"
+          text: strings.t("menu.dock")
           anchors.verticalCenter: parent.verticalCenter
           color: Util.alpha(Color.foreground, 0.52)
           font.family: Style.font.family
@@ -199,13 +202,13 @@ PanelWindow {
         }
 
         UtilityButton {
-          label: root.autoHideEnabled ? "Hiding on" : "Hiding off"
+          label: root.autoHideEnabled ? strings.t("menu.hidingOn") : strings.t("menu.hidingOff")
           action: "toggleAutoHide"
           width: 104
         }
-        UtilityButton { label: "Bottom"; action: "setSideBottom"; selected: root.dockSide === "bottom"; width: 78 }
-        UtilityButton { label: "Left"; action: "setSideLeft"; selected: root.dockSide === "left"; width: 64 }
-        UtilityButton { label: "Right"; action: "setSideRight"; selected: root.dockSide === "right"; width: 68 }
+        UtilityButton { label: strings.t("menu.bottom"); action: "setSideBottom"; selected: root.dockSide === "bottom"; width: 78 }
+        UtilityButton { label: strings.t("menu.left"); action: "setSideLeft"; selected: root.dockSide === "left"; width: 64 }
+        UtilityButton { label: strings.t("menu.right"); action: "setSideRight"; selected: root.dockSide === "right"; width: 68 }
 
         Item { width: 1; height: 1 }
 

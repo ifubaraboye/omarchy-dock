@@ -44,13 +44,11 @@ omarchy plugin add https://github.com/ifubaraboye/omarchy-dock.git
 omarchy plugin enable macos.dock
 ```
 
-The custom-icon helper (search, set, list, clear — see "Custom icons" below) lives in the plugin's own `scripts/` directory, but nothing in Omarchy's plugin system installs it onto `PATH`; do it once by hand:
+The GUI icon picker resolves `scripts/omarchy-dock-icon` automatically relative to the plugin directory. If you also want to use the `omarchy-dock-icon` CLI directly from your terminal, link it onto `PATH`:
 
 ```bash
 ln -sf ~/.config/omarchy/plugins/macos.dock/scripts/omarchy-dock-icon ~/.local/bin/omarchy-dock-icon
 ```
-
-Without this, both the point-and-click picker and the `omarchy-dock-icon` CLI fail — the dock itself works fine either way.
 
 The dock stores pins and auto-hide preference in:
 

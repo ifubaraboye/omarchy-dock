@@ -88,10 +88,10 @@ PanelWindow {
     width: row.implicitWidth
     height: row.implicitHeight
     opacity: root.panelActive ? 1 : 0
-    scale: root.panelActive ? 1 : 0.92
+    scale: root.panelActive ? 1 : 0.96
 
-    Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-    Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+    Behavior on opacity { NumberAnimation { duration: Style.duration(160); easing.type: Easing.OutCubic } }
+    Behavior on scale { NumberAnimation { duration: Style.duration(160); easing.type: Easing.OutCubic } }
 
     Row {
       id: row
