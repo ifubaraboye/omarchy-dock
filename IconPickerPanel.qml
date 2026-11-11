@@ -5,7 +5,6 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
-import qs.Ui
 import "IconResolver.js" as IconResolver
 import "IconSearch.js" as IconSearch
 
@@ -37,6 +36,7 @@ PanelWindow {
   property var results: []
   property var appRows: []
   property bool busy: false
+  property bool applyCancelling: false
   property string statusText: ""
   // Bumped after every successful apply/clear and when the icon mapping is
   // reloaded, forcing preview/row bindings (which cannot track property reads
@@ -45,6 +45,14 @@ PanelWindow {
   property bool pasteVisible: false
   property int gridCell: 112
   property int searchOutputLimit: 2 * 1024 * 1024
+  // Remote previews are fetched through the helper (bounded HTTPS transfer,
+  // private cache) instead of being handed to Qt's image loader, which would
+  // buffer the whole response before decoding it.
+  property var previewPaths: ({})
+  property var previewQueue: []
+  property var previewQueued: ({})
+  property bool previewRunning: false
+  property int previewRevision: 0
 
   signal backRequested()
 
@@ -68,7 +76,7 @@ PanelWindow {
     root.statusText = ""
     root.open = true
     root.appliedRevision++
-    Qt.callLater(function() { searchField.forceActiveFocus() })
+    Qt.callLater(function() { searchField.focusInput() })
     root.prefillSearch()
   }
 
@@ -80,7 +88,7 @@ PanelWindow {
     root.open = true
     root.appliedRevision++
     root.reloadApps()
-    Qt.callLater(function() { appsField.forceActiveFocus() })
+    Qt.callLater(function() { appsField.focusInput() })
   }
 
   function close() {
@@ -90,7 +98,47 @@ PanelWindow {
     root.results = []
     root.appRows = []
     root.statusText = ""
-    root.busy = false
+    // Stop helper processes the closed surface owns instead of only hiding it:
+    // a download or conversion must not outlive the panel that started it.
+    if (searchProcess.running) searchProcess.running = false
+    if (previewProcess.running) previewProcess.running = false
+    root.previewQueue = []
+    root.previewQueued = ({})
+    if (applyProcess.running) {
+      // Keep `busy` set until the process is really gone: Quickshell starts a
+      // replacement command only after the old process exits, so clearing it
+      // now would let a new apply race the terminating one.
+      root.applyCancelling = true
+      applyProcess.running = false
+    } else {
+      root.busy = false
+    }
+  }
+
+  function previewImageSource(url) {
+    var revision = root.previewRevision // keep the binding live across fetches
+    var key = String(url || "")
+    return key && root.previewPaths[key] ? root.previewPaths[key] : ""
+  }
+
+  function requestPreview(url) {
+    var key = String(url || "")
+    if (!key || root.previewPaths[key] || root.previewQueued[key]) return
+    if (!/^https:\/\//.test(key)) return
+    if (!root.helperPath) return
+    root.previewQueued[key] = true
+    root.previewQueue.push(key)
+    root.pumpPreviewQueue()
+  }
+
+  function pumpPreviewQueue() {
+    if (root.previewRunning || root.previewQueue.length === 0 || !root.helperPath) return
+    var url = root.previewQueue.shift()
+    previewProcess.requestedUrl = url
+    previewProcess.output = ""
+    previewProcess.command = root.boundedCommand(75, [root.helperPath, "preview", url])
+    root.previewRunning = true
+    previewProcess.running = true
   }
 
   // Seed the grid with the app's own name so users rarely have to type.
@@ -118,7 +166,7 @@ PanelWindow {
     }
     root.statusText = strings.t("picker.searching")
     searchProcess.outputTooLarge = false
-    searchProcess.command = [root.helperPath, "search", String(query).trim()]
+    searchProcess.command = root.boundedCommand(45, [root.helperPath, "search", String(query).trim()])
     searchProcess.running = true
   }
 
@@ -151,10 +199,21 @@ PanelWindow {
       return
     }
     root.busy = true
+    root.applyCancelling = false
     root.statusText = strings.t("picker.applying")
     applyProcess.pendingSuccess = successMessage
-    applyProcess.command = command
+    // Bound the whole helper run, not just its curl calls: the ImageMagick
+    // conversion that follows a download must not hang the busy state forever.
+    applyProcess.command = root.boundedCommand(90, command)
     applyProcess.running = true
+  }
+
+  // Quickshell does not emit onExited when a Process binary is missing
+  // (QProcess::FailedToStart only clears `running`), which would leave busy
+  // flags and queues stuck. bash always exists, so exec the deadline wrapper
+  // through it: a missing timeout(1) then exits 127 and still runs onExited.
+  function boundedCommand(seconds, command) {
+    return ["bash", "-c", 'exec "$@"', "bash", "timeout", "-k", "5", String(seconds)].concat(command)
   }
 
   function reloadApps() {
@@ -243,6 +302,7 @@ PanelWindow {
         }
       }
       onStreamFinished: {
+        if (!root.open) return
         if (searchProcess.outputTooLarge) {
           root.results = []
           root.statusText = strings.t("picker.responseTooLarge")
@@ -250,6 +310,8 @@ PanelWindow {
         }
         var parsed = IconSearch.parseResponse(text)
         root.results = parsed
+        root.previewQueue = []
+        root.previewQueued = ({})
         if (parsed.length > 0)
           root.statusText = strings.tn("picker.iconsFound", parsed.length).arg(Commons.I18n.formatNumber(parsed.length))
         else
@@ -264,10 +326,33 @@ PanelWindow {
       }
     }
     onExited: function(exitCode) {
+      if (!root.open) return
       if (searchProcess.outputTooLarge)
         root.statusText = strings.t("picker.responseTooLarge")
       else if (exitCode !== 0 && root.results.length === 0)
         root.statusText = strings.t("picker.connectionError")
+    }
+  }
+
+  Process {
+    id: previewProcess
+    property string requestedUrl: ""
+    property string output: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: previewProcess.output = text.trim()
+    }
+    onExited: function(exitCode) {
+      var url = previewProcess.requestedUrl
+      root.previewRunning = false
+      delete root.previewQueued[url]
+      if (exitCode === 0 && previewProcess.output !== "") {
+        root.previewPaths[url] = previewProcess.output
+        root.previewRevision++
+      }
+      previewProcess.output = ""
+      previewProcess.requestedUrl = ""
+      root.pumpPreviewQueue()
     }
   }
 
@@ -281,8 +366,15 @@ PanelWindow {
       }
     }
     onExited: function(exitCode) {
+      var cancelled = root.applyCancelling
+      root.applyCancelling = false
       var success = exitCode === 0
       root.busy = false
+      if (cancelled) {
+        root.applyError = ""
+        applyProcess.pendingSuccess = ""
+        return
+      }
       if (success) {
         root.appliedRevision++
         root.statusText = applyProcess.pendingSuccess
@@ -442,7 +534,7 @@ PanelWindow {
                 if (root.fromManage) {
                   root.mode = "manage"
                   root.statusText = ""
-                  Qt.callLater(function() { appsField.forceActiveFocus() })
+                  Qt.callLater(function() { appsField.focusInput() })
                 } else {
                   root.backRequested()
                 }
@@ -496,7 +588,10 @@ PanelWindow {
             font.pixelSize: 14
           }
 
-          TextField {
+          // BoundedTextField keeps the string in QML and reads the clipboard
+          // only on an explicit paste; see its header for the Qt/Wayland
+          // reason the native TextField is not used here.
+          BoundedTextField {
             id: searchField
             visible: root.mode === "picker"
             anchors.left: parent.left
@@ -505,16 +600,16 @@ PanelWindow {
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             placeholderText: strings.t("picker.searchPlaceholder")
-            placeholderTextColor: Qt.darker(Color.foreground, 1.6)
             color: Color.foreground
             font.family: Style.font.family
             font.pixelSize: Style.font.body
-            background: Item {}
             onTextChanged: { root.pasteVisible = false; root.statusText = ""; searchTimer.restart() }
-            Keys.onEscapePressed: function(event) { root.close(); event.accepted = true }
+            onAccepted: root.searching(String(searchField.text).trim())
+            onEscapePressed: root.close()
+            onPasteFailed: root.statusText = strings.t("picker.pasteFailed")
           }
 
-          TextField {
+          BoundedTextField {
             id: appsField
             visible: root.mode === "manage"
             anchors.left: parent.left
@@ -523,13 +618,13 @@ PanelWindow {
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             placeholderText: strings.t("picker.searchAppsPlaceholder")
-            placeholderTextColor: Qt.darker(Color.foreground, 1.6)
             color: Color.foreground
             font.family: Style.font.family
             font.pixelSize: Style.font.body
-            background: Item {}
             onTextChanged: { root.statusText = ""; appsTimer.restart() }
-            Keys.onEscapePressed: function(event) { root.close(); event.accepted = true }
+            onAccepted: { appsTimer.stop(); root.reloadApps() }
+            onEscapePressed: root.close()
+            onPasteFailed: root.statusText = strings.t("picker.pasteFailed")
           }
         }
 
@@ -541,7 +636,7 @@ PanelWindow {
           color: Util.alpha(Color.foreground, 0.05)
           visible: root.pasteVisible && root.mode === "picker"
 
-          TextField {
+          BoundedTextField {
             id: pasteField
             anchors.left: parent.left
             anchors.leftMargin: 10
@@ -549,12 +644,13 @@ PanelWindow {
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             placeholderText: strings.t("picker.pasteUrlPlaceholder")
-            placeholderTextColor: Qt.darker(Color.foreground, 1.6)
             color: Color.foreground
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
-            background: Item {}
-            Keys.onEscapePressed: function(event) { root.pasteVisible = false; event.accepted = true }
+            maximumLength: 2048
+            onAccepted: root.applyPastedUrl()
+            onEscapePressed: root.pasteVisible = false
+            onPasteFailed: root.statusText = strings.t("picker.pasteFailed")
           }
 
           Rectangle {
@@ -609,6 +705,8 @@ PanelWindow {
               height: root.gridCell
               radius: 12
               color: gridMouse.containsMouse ? Util.alpha(Color.foreground, 0.10) : "transparent"
+              Component.onCompleted: root.requestPreview(modelData.lowResPngUrl)
+              onModelDataChanged: root.requestPreview(modelData.lowResPngUrl)
 
               Column {
                 anchors.fill: parent
@@ -626,7 +724,7 @@ PanelWindow {
                     anchors.centerIn: parent
                     width: 68
                     height: 68
-                    source: modelData.lowResPngUrl
+                    source: root.previewImageSource(modelData.lowResPngUrl)
                     sourceSize: Qt.size(136, 136)
                     fillMode: Image.PreserveAspectFit
                     cache: true
@@ -801,7 +899,7 @@ PanelWindow {
             width: 138
             onClicked: {
               root.pasteVisible = !root.pasteVisible
-              if (root.pasteVisible) Qt.callLater(function() { pasteField.forceActiveFocus() })
+              if (root.pasteVisible) Qt.callLater(function() { pasteField.focusInput() })
             }
           }
           ActionButton {

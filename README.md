@@ -61,8 +61,32 @@ The dock stores pins and auto-hide preference in:
 
 This plugin requires Omarchy 4.5 or newer — it relies on the shell's motion,
 translation, and RTL APIs (`Style.duration`, `Commons.Translations`,
-`Util.readingKey`) — plus `bash`, `curl`, `python3`, ImageMagick (`magick` or
-`convert` and `identify`), and `xdg-open` for the optional custom-icon helper.
+`Util.readingKey`) — plus `bash`, `curl`, `python3`, coreutils `timeout`,
+ImageMagick (`magick` or `convert` and `identify`), and `xdg-open` for the
+optional custom-icon helper. `wl-clipboard` (`wl-paste`) is only needed if you
+want to paste into the icon picker's text fields; the rest of the picker works
+without it.
+
+### Picker text input, previews, and thumbnail cache
+
+The icon picker's search and URL fields are a small custom QML control rather
+than Qt's native `TextField`. An editable native `QQuickTextInput` asks the
+platform clipboard for its full contents whenever the selection changes, and a
+Wayland data offer has no size bound, so a hostile clipboard client could stall
+the shared shell. These fields keep their text in QML and read the clipboard
+only when you press `Ctrl+V` (or `Shift+Insert`), through a separate
+`timeout`-bounded `wl-paste` that keeps at most 4 KiB. Because the native input
+path is not used, **IME composition is not available in these three fields**
+(type or paste instead); everywhere else in the desktop is unaffected.
+
+Remote search previews shown in the picker are downloaded by the helper over
+HTTPS with a 2 MiB transfer cap, a 15 s deadline, redirect and scheme limits,
+and a 512×512 / 262144-pixel decode limit, then cached for 30 days under
+`~/.cache/omarchy-dock/previews/`. They are never handed to Qt's image loader
+as remote URLs, which would buffer the whole response first. Window thumbnails
+are stored in `~/.cache/omarchy-dock/thumbs/` in an owner-only (`0700`)
+directory with `0600` files; upgrade runs repair permissions on files captured
+by older versions.
 
 For the best experience, use **floating windows** (not tiling): the dock is
 designed to work with a floating layout where windows overlap its surface, and
@@ -136,6 +160,8 @@ For scripting, the same operations are available from a terminal:
 
 ```bash
 omarchy-dock-icon search figma
+# resolve a remote preview URL into the bounded local cache (prints its path)
+omarchy-dock-icon preview https://example.com/icon.png
 omarchy-dock-icon set code figma-i3FsrkYvf6
 omarchy-dock-icon set code --file ~/Pictures/code.png
 omarchy-dock-icon set code https://example.com/icon.png
@@ -309,7 +335,7 @@ For reference, the companion files with all defaults applied:
 
 ```bash
 ./tests/run.sh
-qmllint DockPanel.qml DockPanelBase.qml DockItem.qml DockMenu.qml
+qmllint DockPanel.qml DockPanelBase.qml DockItem.qml DockMenu.qml IconPickerPanel.qml BoundedTextField.qml
 ```
 
 The dock fills every connected output by default, with one layer surface per

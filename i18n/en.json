@@ -44,6 +44,7 @@
   "picker.iconUpdated": "Icon updated",
   "picker.enterValidUrl": "Enter a full http(s) image URL",
   "picker.iconCleared": "Custom icon cleared",
+  "picker.pasteFailed": "Couldn't read the clipboard",
   "picker.applying": "Applying",
   "picker.responseTooLarge": "Couldn't reach macOSicons — response too large",
   "picker.noMatches": "No matches — try another term",

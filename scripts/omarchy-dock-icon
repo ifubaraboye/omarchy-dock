@@ -12,12 +12,35 @@ max_page_size="2M"
 max_image_width=4096
 max_image_height=4096
 max_image_pixels=16777216
+# Remote search previews are untrusted and only ever displayed small: keep the
+# local cache of them tight, private, and short-lived.
+preview_cache_dir="$user_home/.cache/omarchy-dock/previews"
+max_preview_size="2M"
+max_preview_bytes=2097152
+max_preview_width=512
+max_preview_height=512
+max_preview_pixels=262144
+preview_ttl_days=30
+
+# Temporary files are registered here and removed on any exit path, including
+# die(), so a failed download/validation cannot leave partial images behind.
+cleanup_files=()
+cleanup() {
+  (( ${#cleanup_files[@]} )) && rm -f -- "${cleanup_files[@]}"
+  return 0
+}
+trap cleanup EXIT
+# Run the EXIT cleanup even when Quickshell or timeout(1) terminates us.
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 
 die() { printf '%s\n' "$command_name: $*" >&2; exit 1; }
 usage() {
   cat <<'EOF'
 Usage:
   omarchy-dock-icon search <query>
+  omarchy-dock-icon preview <https-image-url>
   omarchy-dock-icon set <app-id> <macosicons-page-or-image-url>
   omarchy-dock-icon set <app-id> --file <local-image>
   omarchy-dock-icon clear <app-id>
@@ -31,6 +54,7 @@ require_tools() {
   command -v "$curl_cmd" >/dev/null || die "curl is required"
   command -v magick >/dev/null || command -v convert >/dev/null || die "ImageMagick is required"
   command -v identify >/dev/null || die "ImageMagick identify is required"
+  command -v timeout >/dev/null || die "timeout is required"
 }
 
 canonical_id() {
@@ -72,6 +96,64 @@ print(json.dumps(out, separators=(",", ":")))
 PY
 }
 
+# A displayed search preview is fetched through this bounded, HTTPS-only path
+# instead of handing the URL to Qt's image loader: the loader buffers the whole
+# HTTP body before decoding, so a hostile or compromised preview endpoint could
+# grow the shell's memory without any of the search/download limits applying.
+# The helper caps the transfer, enforces a deadline, validates the decoded
+# dimensions, and returns a private local path the picker can display.
+preview_icon() {
+  local url="$1" key target temporary format extension width height pixels
+  [[ "$url" =~ ^https://[^[:space:]\"\']+$ ]] || die "preview URL must be a plain https URL"
+  key="$(python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest())' "$url")"
+
+  for extension in png webp jpg; do
+    if [[ -s "$preview_cache_dir/$key.$extension" ]]; then
+      printf '%s\n' "$preview_cache_dir/$key.$extension"
+      return 0
+    fi
+  done
+
+  umask 077
+  mkdir -p "$preview_cache_dir"
+  chmod 700 "$(dirname "$preview_cache_dir")" "$preview_cache_dir" 2>/dev/null || true
+  find "$preview_cache_dir" -maxdepth 1 -type f -mtime +"$preview_ttl_days" -delete 2>/dev/null || true
+
+  temporary="$(mktemp "$preview_cache_dir/.${key}.XXXXXX")"
+  cleanup_files+=("$temporary")
+
+  # curl's --max-filesize also bounds bodies whose length is not advertised,
+  # but piping through head -c applies a byte ceiling while receiving even if
+  # the transfer tool changes; pipefail turns a truncated response into a
+  # failure instead of caching a partial image.
+  "$curl_cmd" -fsSL --retry 1 --connect-timeout 5 --max-time 15 \
+    --max-redirs 3 --proto '=https' --proto-redir '=https' \
+    --max-filesize "$max_preview_size" "$url" \
+    | head -c "$max_preview_bytes" > "$temporary" \
+    || die "preview download failed"
+
+  format="$(timeout -k 2 15 identify -ping -format '%m' "$temporary" 2>/dev/null || true)"
+  case "$format" in
+    PNG) extension="png" ;;
+    WEBP) extension="webp" ;;
+    JPEG) extension="jpg" ;;
+    *) die "preview is not a PNG, WebP, or JPEG image" ;;
+  esac
+
+  read -r width height < <(timeout -k 2 15 identify -ping -format '%w %h\n' "$temporary" 2>/dev/null) \
+    || die "preview has invalid image dimensions"
+  [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || die "preview has invalid image dimensions"
+  (( width > 0 && height > 0 && width <= max_preview_width && height <= max_preview_height )) \
+    || die "preview dimensions exceed ${max_preview_width}x${max_preview_height}"
+  pixels=$((width * height))
+  (( pixels <= max_preview_pixels )) || die "preview exceeds $max_preview_pixels pixels"
+
+  target="$preview_cache_dir/$key.$extension"
+  chmod 600 "$temporary"
+  mv -f -- "$temporary" "$target"
+  printf '%s\n' "$target"
+}
+
 extract_image_url() {
   local html_file="$1" source="$2"
   python3 - "$html_file" "$source" <<'PY'
@@ -103,7 +185,7 @@ round_icon() {
   if command -v magick >/dev/null; then tool="magick"; else tool="convert"; fi
 
   # Check dimensions before any operation that decodes the image pixels.
-  read -r width height < <(identify -ping -format '%w %h\n' "$source" 2>/dev/null) \
+  read -r width height < <(timeout -k 2 15 identify -ping -format '%w %h\n' "$source" 2>/dev/null) \
     || die "downloaded file has invalid image dimensions"
   [[ "$width" -le "$max_image_width" && "$height" -le "$max_image_height" ]] \
     || die "image dimensions exceed ${max_image_width}x${max_image_height} pixels"
@@ -113,12 +195,12 @@ round_icon() {
 
   # Remove transparent padding so icons with a small painted logo do not
   # appear smaller than the rest of the dock.
-  "$tool" "$source" -trim +repage "$destination"
-  width="$(identify -ping -format '%w' "$destination")"
-  height="$(identify -ping -format '%h' "$destination")"
+  timeout -k 2 30 "$tool" "$source" -trim +repage "$destination"
+  width="$(timeout -k 2 15 identify -ping -format '%w' "$destination")"
+  height="$(timeout -k 2 15 identify -ping -format '%h' "$destination")"
   radius=$(( (width < height ? width : height) * 22 / 100 ))
   masked="${destination}.masked"
-  "$tool" "$destination" -alpha on \
+  timeout -k 2 30 "$tool" "$destination" -alpha on \
     \( -size "${width}x${height}" xc:none -fill white \
        -draw "roundrectangle 0,0 $((width - 1)),$((height - 1)) $radius,$radius" \) \
     -compose DstIn -composite "$masked"
@@ -167,7 +249,7 @@ set_icon() {
   input="$2"
   mkdir -p "$icon_dir"
   temporary="$(mktemp "$icon_dir/.${app_id}.XXXXXX")"
-  trap 'rm -f "$temporary"' RETURN
+  cleanup_files+=("$temporary")
 
   if [[ "$input" == "--file" ]]; then
     [[ -f "$3" ]] || die "image file not found: $3"
@@ -191,7 +273,7 @@ set_icon() {
       if [[ -z "$image_url" ]]; then
         local page_file
         page_file="$(mktemp)"
-        trap 'rm -f "$temporary" "$page_file"' RETURN
+        cleanup_files+=("$page_file")
         "$curl_cmd" -fL --retry 2 --connect-timeout 10 --max-time 30 \
           --proto '=https' --proto-redir '=https' --max-filesize "$max_page_size" \
           -o "$page_file" "$source"
@@ -206,7 +288,7 @@ set_icon() {
   # Validate the downloaded asset as an image. The downloaded bytes are never
   # passed to a shell or interpreter; ImageMagick only inspects the file type.
   local image_format
-  image_format="$(identify -ping -format '%m' "$temporary" 2>/dev/null || true)"
+  image_format="$(timeout -k 2 15 identify -ping -format '%m' "$temporary" 2>/dev/null || true)"
   case "$image_format" in
     PNG|WEBP) ;;
     *) die "downloaded file is not a valid PNG or WebP image" ;;
@@ -214,12 +296,11 @@ set_icon() {
 
   local rounded
   rounded="$(mktemp "$icon_dir/.${app_id}.rounded.XXXXXX.png")"
-  trap 'rm -f "$temporary" "$rounded"' RETURN
+  cleanup_files+=("$rounded")
   round_icon "$temporary" "$rounded"
   filename="$app_id.png"
   mv -f -- "$rounded" "$icon_dir/$filename"
   write_mapping "$app_id" "$filename" "$source" "$image_url"
-  trap - RETURN
   printf 'Set custom icon for %s\n' "$app_id"
 }
 
@@ -273,6 +354,7 @@ PY
 require_tools
 case "${1:-}" in
   search) [[ $# -eq 2 ]] || { usage; exit 2; }; search_icons "$2" ;;
+  preview) [[ $# -eq 2 ]] || { usage; exit 2; }; preview_icon "$2" ;;
   set)
     [[ $# -ge 3 ]] || { usage; exit 2; }
     if [[ "$3" == "--file" ]]; then

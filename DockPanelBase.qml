@@ -1423,13 +1423,21 @@ Item {
     if (root.snapshotPending === 0) root.applyThumbnails()
   }
 
+  // Quickshell does not emit onExited when a Process binary is missing
+  // (QProcess::FailedToStart only clears `running`), which would leave capture
+  // and icon queues stuck. bash always exists, so exec the deadline wrapper
+  // through it: a missing timeout(1) then exits 127 and still runs onExited.
+  function boundedCommand(seconds, command) {
+    return ["bash", "-c", 'exec "$@"', "bash", "timeout", "-k", "5", String(seconds)].concat(command)
+  }
+
   function captureForSnapshot(job) {
     root.snapshotPending++
     root.inFlightAddrs[job.address] = true
     var proc = captureProcess.createObject(root, {
       jobAddress: job.address,
       jobBatch: root.currentThumbBatch,
-      command: ["bash", "-c", root.thumbnailCommand(job)]
+      command: root.boundedCommand(20, ["bash", "-c", root.thumbnailCommand(job)])
     })
     proc.running = true
   }
@@ -1440,8 +1448,8 @@ Item {
     root.inFlightAddrs[info.address] = true
     var proc = captureProcess.createObject(root, {
       jobAddress: info.address,
-      jobBatch: "",
-      command: ["bash", "-c", root.thumbnailCommand(info)]
+      jobBatch: 0,
+      command: root.boundedCommand(20, ["bash", "-c", root.thumbnailCommand(info)])
     })
     proc.running = true
   }
@@ -1451,9 +1459,24 @@ Item {
     var target = Util.shellQuote(root.thumbnailDir + "/" + job.address + ".png")
     var tmp = Util.shellQuote(root.thumbnailDir + "/" + job.address + ".png.tmp")
     var geometry = job.x + "," + job.y + " " + job.w + "x" + job.h
-    return "mkdir -p " + dir
-      + "; grim -g \"" + geometry + "\" - | magick - -resize 304x184^ -gravity center -extent 304x184 png:" + tmp
-      + " && mv " + tmp + " " + target
+    // Thumbnails are pixels from other windows, so keep the cache owner-private
+    // (umask covers the temporary file and the rename; chmod repairs a
+    // directory left permissive by an older plugin version) and put a hard
+    // deadline on both halves of the capture pipeline.
+    return "set -o pipefail; umask 077; d=" + dir
+      + "; mkdir -p \"$d\" && chmod 700 \"$(dirname \"$d\")\" \"$d\""
+      + "; rm -f " + tmp
+      + "; timeout -k 2 8 grim -g \"" + geometry + "\" - | timeout -k 2 10 magick - -resize 304x184^ -gravity center -extent 304x184 png:" + tmp
+      + " && chmod 600 " + tmp + " && mv " + tmp + " " + target
+  }
+
+  // Repair permissions on thumbnails captured by older versions (0600 owner-only
+  // from now on, 0700 directory) without waiting for the next capture.
+  function thumbnailPermissionCommand() {
+    var dir = Util.shellQuote(root.thumbnailDir)
+    return "umask 077; d=" + dir
+      + "; mkdir -p \"$d\" && chmod 700 \"$(dirname \"$d\")\" \"$d\""
+      + " && find \"$d\" -maxdepth 1 -type f -exec chmod 600 {} + 2>/dev/null || true"
   }
 
   function applyThumbnails() {
@@ -1598,7 +1621,9 @@ Item {
     if (!root.nativeIconQueue.length || nativeIconProcess.running) return
     var job = root.nativeIconQueue.shift()
     root.currentNativeIconJob = job
-    nativeIconProcess.command = ["bash", "-c", root.nativeIconCommand(job.src, job.target)]
+    // The icon pipeline runs ImageMagick on arbitrary theme files: bound the
+    // whole script so a wedged decode cannot pin the queue forever.
+    nativeIconProcess.command = root.boundedCommand(60, ["bash", "-c", root.nativeIconCommand(job.src, job.target)])
     nativeIconProcess.running = true
   }
 
@@ -1732,17 +1757,27 @@ Item {
     Process {
       id: self
       required property string jobAddress
-      required property string jobBatch
+      required property int jobBatch
       onExited: function(exitCode) {
         if (exitCode === 0) root.thumbCache[self.jobAddress] = true
+        // Snapshot captures carry the batch they belong to; hover captures use
+        // 0 and never touch snapshotPending. Keeping both operands integers is
+        // what makes the stale-batch rejection reliable (it previously compared
+        // a string-converted property against an int and never matched).
         if (self.jobBatch === root.currentThumbBatch) {
-          root.snapshotPending--
+          root.snapshotPending = Math.max(0, root.snapshotPending - 1)
           if (root.snapshotPending === 0) root.applyThumbnails()
         }
         delete root.inFlightAddrs[self.jobAddress]
         self.destroy()
       }
     }
+  }
+
+  Process {
+    id: thumbnailPermissions
+    command: root.boundedCommand(15, ["bash", "-c", root.thumbnailPermissionCommand()])
+    running: true
   }
 
   property string activeThumbAddress: ""
