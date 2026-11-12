@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Run a command as timeout(1)'s immediate child and clean up its private
+# process group even when timeout itself is SIGKILLed.
+#
+# timeout(1) puts itself in a new process group (setpgid(0,0)) and installs
+# PR_SET_PDEATHSIG on its immediate child before exec. If Quickshell tears the
+# plugin down, its Process destructor kills only the tracked PID -- the timeout
+# monitor -- so timeout never gets to forward a signal. We sit directly below
+# timeout: its parent-death signal becomes our TERM trap, and we signal the
+# whole private group ourselves, then start a detached KILL escalation for
+# descendants that ignore TERM.
+#
+# Usage: omarchy-dock-guard GRACE COMMAND [ARG...]
+#
+# GRACE is the number of seconds between TERM and KILL. All nested timeout(1)
+# calls in the wrapped command must use --foreground; otherwise they create
+# new process groups that escape this group cleanup.
+#
+# The group is only managed when it really is timeout's private group (our
+# parent is the group leader). Guard falls back to a plain exec otherwise, so
+# a mistaken direct invocation can never signal the shell's group.
+set -u
+
+grace="${1:-2}"
+shift || exit 125
+[ "$#" -gt 0 ] || exit 125
+
+case "$grace" in
+  ''|*[!0-9]*) grace=2 ;;
+esac
+
+pgid=""
+ppid=""
+if [ -r "/proc/$$/stat" ]; then
+  stat_line="$(<"/proc/$$/stat")" || stat_line=""
+  # Strip "pid (comm) " (comm may itself contain spaces or parentheses), then
+  # read state, parent PID, and process group from the fixed fields.
+  rest="${stat_line##*) }"
+  read -r _state ppid pgid _ <<<"$rest"
+fi
+
+# `pgid == ppid` means our parent leads our group, which is how timeout(1)
+# creates its private group. A shell that is a group leader looks the same
+# from /proc, so also require the parent to actually be timeout(1); otherwise a
+# direct invocation could signal the caller's own group.
+parent_comm=""
+if [[ "$ppid" =~ ^[0-9]+$ && -r "/proc/$ppid/comm" ]]; then
+  IFS= read -r parent_comm < "/proc/$ppid/comm" || parent_comm=""
+fi
+
+if [[ ! "$pgid" =~ ^[0-9]+$ || ! "$ppid" =~ ^[0-9]+$ \
+      || "$pgid" != "$ppid" || "$pgid" == "$$" \
+      || "$parent_comm" != "timeout" ]]; then
+  exec "$@"
+fi
+
+cleaned=0
+
+cleanup_group() {
+  [ "$cleaned" -eq 1 ] && return 0
+  cleaned=1
+  # Ignore further termination requests: the group signal below reaches this
+  # guard too, and we must survive long enough to start the escalation.
+  trap '' TERM INT HUP
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  # A stopped member cannot act on TERM until it is continued, matching
+  # timeout(1)'s own cleanup order.
+  kill -CONT -- "-$pgid" 2>/dev/null || true
+
+  # KILL after the grace period from a detached session so it still lands if
+  # the outer timeout(1) or this guard disappears first.
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash -c 'sleep "$1" 2>/dev/null; kill -KILL -- "-$2" 2>/dev/null || true' \
+      bash "$grace" "$pgid" </dev/null >/dev/null 2>&1 &
+  else
+    ( sleep "$grace"; kill -KILL -- "-$pgid" 2>/dev/null || true ) \
+      </dev/null >/dev/null 2>&1 &
+  fi
+  return 0
+}
+
+trap 'cleanup_group; exit 143' TERM
+trap 'cleanup_group; exit 130' INT
+trap 'cleanup_group; exit 129' HUP
+
+"$@" &
+child=$!
+wait "$child"
+status=$?
+exit "$status"

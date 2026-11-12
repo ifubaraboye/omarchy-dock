@@ -29,11 +29,25 @@ Item {
   property alias font: content.font
   property int cursor: 0
 
+  // Guard that timeout(1) runs as its immediate child. The picker passes the
+  // plugin-resolved path; resolving beside this file keeps the field safe if
+  // it is ever used on its own.
+  property string guardPath: {
+    var path = String(Qt.resolvedUrl("scripts/omarchy-dock-guard")).replace(/^file:\/\//, "")
+    try { return decodeURIComponent(path) } catch (e) { return path }
+  }
+
   // Bounded, deadline-limited clipboard reader. 4 KiB is far above any search
   // term or image URL, and timeout(1) guarantees the process (and the GUI
   // queue behind it) cannot wait on an endless producer.
   readonly property int pasteByteLimit: 4096
-  readonly property string pasteCommand: "set -o pipefail; timeout -k 1 2 wl-paste --no-newline 2>/dev/null | head -c " + root.pasteByteLimit
+  // wl-paste runs below the guard, which timeout(1) puts in a private process
+  // group. Quickshell's Process destructor SIGKILLs only the tracked timeout
+  // PID during a plugin teardown, so the guard's parent-death TERM is what
+  // removes wl-paste and head instead of leaving the pipeline untracked.
+  readonly property string pasteCommand: "set -o pipefail; wl-paste --no-newline 2>/dev/null | head -c " + root.pasteByteLimit
+  readonly property var pasteProcessCommand: ["bash", "-c", 'exec "$@"', "bash",
+    "timeout", "-k", "2", "2", root.guardPath, "1", "bash", "-c", root.pasteCommand]
 
   implicitWidth: 120
   implicitHeight: Math.max(20, content.implicitHeight + 6)
@@ -201,7 +215,7 @@ Item {
   Process {
     id: pasteProcess
     property string collected: ""
-    command: ["bash", "-c", root.pasteCommand]
+    command: root.pasteProcessCommand
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: pasteProcess.collected = text

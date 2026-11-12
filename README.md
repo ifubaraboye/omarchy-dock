@@ -79,6 +79,15 @@ only when you press `Ctrl+V` (or `Shift+Insert`), through a separate
 path is not used, **IME composition is not available in these three fields**
 (type or paste instead); everywhere else in the desktop is unaffected.
 
+Every bounded helper, capture, and paste command runs below
+`scripts/omarchy-dock-guard`, which `timeout` starts in a private process
+group. This matters when the plugin is unloaded: Quickshell's `Process`
+destructor SIGKILLs only the tracked `timeout` PID, so `timeout` itself cannot
+forward a signal. The guard receives the parent-death TERM, terminates the
+whole group, and escalates to SIGKILL after a short grace period for
+descendants that ignore TERM. Nested `timeout` calls use `--foreground` so they
+stay inside that group instead of creating an untracked one.
+
 Remote search previews shown in the picker are downloaded by the helper over
 HTTPS with a 2 MiB transfer cap, a 15 s deadline, redirect and scheme limits,
 and a 512×512 / 262144-pixel decode limit, then cached for 30 days under

@@ -31,6 +31,12 @@ PanelWindow {
   property var customIcons: ({})
   property var iconSourceFor: function(id) { return "" }
   property string helperPath: ""
+  // DockPanelBase passes the plugin-resolved guard; resolving here keeps the
+  // panel's bounded commands guarded if it is ever instantiated on its own.
+  property string guardPath: {
+    var path = String(Qt.resolvedUrl("scripts/omarchy-dock-guard")).replace(/^file:\/\//, "")
+    try { return decodeURIComponent(path) } catch (e) { return path }
+  }
   property var shell: null
 
   property var results: []
@@ -212,8 +218,10 @@ PanelWindow {
   // (QProcess::FailedToStart only clears `running`), which would leave busy
   // flags and queues stuck. bash always exists, so exec the deadline wrapper
   // through it: a missing timeout(1) then exits 127 and still runs onExited.
+  // The guard is timeout's immediate child; see DockPanelBase.boundedCommand.
   function boundedCommand(seconds, command) {
-    return ["bash", "-c", 'exec "$@"', "bash", "timeout", "-k", "5", String(seconds)].concat(command)
+    return ["bash", "-c", 'exec "$@"', "bash", "timeout", "-k", "5", String(seconds),
+            root.guardPath, "2"].concat(command)
   }
 
   function reloadApps() {
@@ -593,6 +601,7 @@ PanelWindow {
           // reason the native TextField is not used here.
           BoundedTextField {
             id: searchField
+            guardPath: root.guardPath
             visible: root.mode === "picker"
             anchors.left: parent.left
             anchors.leftMargin: 34
@@ -611,6 +620,7 @@ PanelWindow {
 
           BoundedTextField {
             id: appsField
+            guardPath: root.guardPath
             visible: root.mode === "manage"
             anchors.left: parent.left
             anchors.leftMargin: 34
@@ -638,6 +648,7 @@ PanelWindow {
 
           BoundedTextField {
             id: pasteField
+            guardPath: root.guardPath
             anchors.left: parent.left
             anchors.leftMargin: 10
             anchors.right: pasteApply.left

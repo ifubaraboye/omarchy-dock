@@ -299,6 +299,14 @@ Item {
     try { return decodeURIComponent(path) } catch (e) { return path }
   }
   property string helperPath: root.bundledHelperPath
+  // The guard sits between timeout(1) and every bounded command so a plugin
+  // teardown that SIGKILLs the tracked timeout still cleans up its process
+  // group. Keep it resolved relative to the plugin like the helper.
+  readonly property string bundledGuardPath: {
+    var path = String(Qt.resolvedUrl("scripts/omarchy-dock-guard")).replace(/^file:\/\//, "")
+    try { return decodeURIComponent(path) } catch (e) { return path }
+  }
+  property string guardPath: root.bundledGuardPath
   // Downloads / Trash — fixed special items at the right end, after the separator.
   property string downloadsPath: home + "/Downloads"
   property string trashFilesPath: home + "/.local/share/Trash/files"
@@ -1427,8 +1435,15 @@ Item {
   // (QProcess::FailedToStart only clears `running`), which would leave capture
   // and icon queues stuck. bash always exists, so exec the deadline wrapper
   // through it: a missing timeout(1) then exits 127 and still runs onExited.
+  //
+  // The guard is timeout's immediate child. Quickshell's Process destructor
+  // SIGKILLs only the tracked PID (the timeout monitor), which cannot forward
+  // signals; timeout's PR_SET_PDEATHSIG turns that kill into a TERM for the
+  // guard, and the guard terminates the private process group. Nested
+  // timeouts must therefore use --foreground so they stay in that group.
   function boundedCommand(seconds, command) {
-    return ["bash", "-c", 'exec "$@"', "bash", "timeout", "-k", "5", String(seconds)].concat(command)
+    return ["bash", "-c", 'exec "$@"', "bash", "timeout", "-k", "5", String(seconds),
+            root.guardPath, "2"].concat(command)
   }
 
   function captureForSnapshot(job) {
@@ -1466,7 +1481,7 @@ Item {
     return "set -o pipefail; umask 077; d=" + dir
       + "; mkdir -p \"$d\" && chmod 700 \"$(dirname \"$d\")\" \"$d\""
       + "; rm -f " + tmp
-      + "; timeout -k 2 8 grim -g \"" + geometry + "\" - | timeout -k 2 10 magick - -resize 304x184^ -gravity center -extent 304x184 png:" + tmp
+      + "; timeout --foreground -k 2 8 grim -g \"" + geometry + "\" - | timeout --foreground -k 2 10 magick - -resize 304x184^ -gravity center -extent 304x184 png:" + tmp
       + " && chmod 600 " + tmp + " && mv " + tmp + " " + target
   }
 
@@ -2316,6 +2331,7 @@ Item {
     customIcons: root.customIcons
     iconSourceFor: function(id) { return root.iconSourceFor(id) }
     helperPath: root.helperPath
+    guardPath: root.guardPath
     onBackRequested: {
       var previousItem = root.pickerReturnItem
       iconPicker.close()

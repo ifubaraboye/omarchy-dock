@@ -132,7 +132,7 @@ preview_icon() {
     | head -c "$max_preview_bytes" > "$temporary" \
     || die "preview download failed"
 
-  format="$(timeout -k 2 15 identify -ping -format '%m' "$temporary" 2>/dev/null || true)"
+  format="$(timeout --foreground -k 2 15 identify -ping -format '%m' "$temporary" 2>/dev/null || true)"
   case "$format" in
     PNG) extension="png" ;;
     WEBP) extension="webp" ;;
@@ -140,7 +140,7 @@ preview_icon() {
     *) die "preview is not a PNG, WebP, or JPEG image" ;;
   esac
 
-  read -r width height < <(timeout -k 2 15 identify -ping -format '%w %h\n' "$temporary" 2>/dev/null) \
+  read -r width height < <(timeout --foreground -k 2 15 identify -ping -format '%w %h\n' "$temporary" 2>/dev/null) \
     || die "preview has invalid image dimensions"
   [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ ]] || die "preview has invalid image dimensions"
   (( width > 0 && height > 0 && width <= max_preview_width && height <= max_preview_height )) \
@@ -185,7 +185,7 @@ round_icon() {
   if command -v magick >/dev/null; then tool="magick"; else tool="convert"; fi
 
   # Check dimensions before any operation that decodes the image pixels.
-  read -r width height < <(timeout -k 2 15 identify -ping -format '%w %h\n' "$source" 2>/dev/null) \
+  read -r width height < <(timeout --foreground -k 2 15 identify -ping -format '%w %h\n' "$source" 2>/dev/null) \
     || die "downloaded file has invalid image dimensions"
   [[ "$width" -le "$max_image_width" && "$height" -le "$max_image_height" ]] \
     || die "image dimensions exceed ${max_image_width}x${max_image_height} pixels"
@@ -195,12 +195,13 @@ round_icon() {
 
   # Remove transparent padding so icons with a small painted logo do not
   # appear smaller than the rest of the dock.
-  timeout -k 2 30 "$tool" "$source" -trim +repage "$destination"
-  width="$(timeout -k 2 15 identify -ping -format '%w' "$destination")"
-  height="$(timeout -k 2 15 identify -ping -format '%h' "$destination")"
+  timeout --foreground -k 2 30 "$tool" "$source" -trim +repage "$destination"
+  width="$(timeout --foreground -k 2 15 identify -ping -format '%w' "$destination")"
+  height="$(timeout --foreground -k 2 15 identify -ping -format '%h' "$destination")"
   radius=$(( (width < height ? width : height) * 22 / 100 ))
   masked="${destination}.masked"
-  timeout -k 2 30 "$tool" "$destination" -alpha on \
+  cleanup_files+=("$masked")
+  timeout --foreground -k 2 30 "$tool" "$destination" -alpha on \
     \( -size "${width}x${height}" xc:none -fill white \
        -draw "roundrectangle 0,0 $((width - 1)),$((height - 1)) $radius,$radius" \) \
     -compose DstIn -composite "$masked"
@@ -288,7 +289,7 @@ set_icon() {
   # Validate the downloaded asset as an image. The downloaded bytes are never
   # passed to a shell or interpreter; ImageMagick only inspects the file type.
   local image_format
-  image_format="$(timeout -k 2 15 identify -ping -format '%m' "$temporary" 2>/dev/null || true)"
+  image_format="$(timeout --foreground -k 2 15 identify -ping -format '%m' "$temporary" 2>/dev/null || true)"
   case "$image_format" in
     PNG|WEBP) ;;
     *) die "downloaded file is not a valid PNG or WebP image" ;;
