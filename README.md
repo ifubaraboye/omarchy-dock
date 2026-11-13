@@ -79,7 +79,8 @@ only when you press `Ctrl+V` (or `Shift+Insert`), through a separate
 path is not used, **IME composition is not available in these three fields**
 (type or paste instead); everywhere else in the desktop is unaffected.
 
-Every bounded helper, capture, and paste command runs below
+Every tracked `Process` command — helper, capture, paste, compositor startup
+probe, and Downloads/Trash lookup — runs below
 `scripts/omarchy-dock-guard`, which `timeout` starts in a private process
 group. This matters when the plugin is unloaded: Quickshell's `Process`
 destructor SIGKILLs only the tracked `timeout` PID, so `timeout` itself cannot

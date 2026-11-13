@@ -1064,7 +1064,10 @@ Item {
 
   Process {
     id: cursorCaptureProcess
-    command: ["hyprctl", "cursorpos"]
+    // A deadline on the interactive capture matters for more than cleanup:
+    // focusNoWarpProcess is chained from onStreamFinished, so a wedged
+    // compositor query would otherwise hold the pending focus target forever.
+    command: root.boundedCommand(5, ["hyprctl", "cursorpos"])
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -1076,7 +1079,7 @@ Item {
 
   Process {
     id: focusNoWarpProcess
-    command: ["hyprctl", "eval", "hl.config({ cursor = { no_warps = true } })"]
+    command: root.boundedCommand(5, ["hyprctl", "eval", "hl.config({ cursor = { no_warps = true } })"])
     onExited: {
       if (!root.pendingFocusTarget) return
       var target = root.pendingFocusTarget
@@ -1913,7 +1916,9 @@ Item {
 
   Process {
     id: layerRuleProcess
-    command: ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"]
+    // Startup compositor probes are bounded too: a hung Hyprland IPC socket
+    // must not leave a tracked Process alive for the plugin's whole lifetime.
+    command: root.boundedCommand(5, ["hyprctl", "eval", "hl.layer_rule({ match = { namespace = \"macos-dock-alt-tab\" }, no_anim = true, animation = \"none\" })"])
   }
 
   Timer {
@@ -1934,7 +1939,7 @@ Item {
     // app switcher HUD is the primary alt-tab. The defaults bind ALT+TAB twice
     // (cycle + bring-to-top), so both must be unbound first. ALT+GRAVE stays
     // as the dedicated fallback combo.
-    command: ["hyprctl", "eval", "hl.unbind(\"ALT + TAB\") hl.unbind(\"ALT + SHIFT + TAB\") hl.unbind(\"ALT + GRAVE\") hl.unbind(\"ALT + SHIFT + GRAVE\") o.bind(\"ALT + TAB\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + TAB\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\") o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"]
+    command: root.boundedCommand(5, ["hyprctl", "eval", "hl.unbind(\"ALT + TAB\") hl.unbind(\"ALT + SHIFT + TAB\") hl.unbind(\"ALT + GRAVE\") hl.unbind(\"ALT + SHIFT + GRAVE\") o.bind(\"ALT + TAB\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + TAB\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\") o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"])
   }
 
   Variants {
@@ -2352,7 +2357,9 @@ Item {
   // then ~/.local/bin, then PATH.
   Process {
     id: helperResolveProcess
-    command: ["bash", "-c", "if [ -x \"$1\" ]; then printf '%s' \"$1\"; elif [ -x \"$HOME/.local/bin/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.local/bin/omarchy-dock-icon\"; else command -v omarchy-dock-icon || true; fi", "sh", root.bundledHelperPath]
+    // Keep the bundled helper path as the fallback: if resolution exceeds its
+    // deadline, the default already points at the shipped script.
+    command: root.boundedCommand(5, ["bash", "-c", "if [ -x \"$1\" ]; then printf '%s' \"$1\"; elif [ -x \"$HOME/.local/bin/omarchy-dock-icon\" ]; then printf '%s' \"$HOME/.local/bin/omarchy-dock-icon\"; else command -v omarchy-dock-icon || true; fi", "sh", root.bundledHelperPath])
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -2364,7 +2371,9 @@ Item {
 
   Process {
     id: downloadsDirProcess
-    command: ["bash", "-c", root.resolvedDownloadsDirCommand()]
+    // A stuck xdg-user-dir lookup falls back to the existing default
+    // ~/Downloads path once the deadline expires.
+    command: root.boundedCommand(5, ["bash", "-c", root.resolvedDownloadsDirCommand()])
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -2377,12 +2386,16 @@ Item {
   // Trash full/empty detection — poll the Trash files directory.
   Process {
     id: trashCheckProcess
-    command: ["bash", "-c", "ls -A \"" + root.trashFilesPath + "\" 2>/dev/null | head -1 | grep -q . && echo full || echo empty"]
+    // Polled every 5 s; the deadline keeps one wedged ls/grep from pinning
+    // `running` and silently stopping all later trash-state checks.
+    command: root.boundedCommand(5, ["bash", "-c", "ls -A \"" + root.trashFilesPath + "\" 2>/dev/null | head -1 | grep -q . && echo full || echo empty"])
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var s = String(text || "").trim()
-        root.trashFull = (s === "full")
+        // Leave the previous state alone when the probe timed out or failed;
+        // an empty stream is not evidence that the Trash is empty.
+        if (s === "full" || s === "empty") root.trashFull = (s === "full")
       }
     }
   }

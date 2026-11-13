@@ -61,6 +61,21 @@ bad="$(grep -rn 'timeout -k' "$root/scripts/omarchy-dock-icon" "$root/DockPanelB
   fail "nested timeout without --foreground can escape the guard"
 }
 
+echo "== every tracked Process uses the deadline wrapper"
+# Literal argv arrays bypass boundedCommand and therefore have no timeout or
+# guard. Dynamic commands are assigned through boundedCommand; the paste
+# command in BoundedTextField already embeds timeout + guard explicitly.
+bad="$(grep -rnE '^[[:space:]]*command:[[:space:]]*\[' "$root"/*.qml 2>/dev/null || true)"
+[[ -z "$bad" ]] || {
+  printf '%s\n' "$bad" >&2
+  fail "Process command literal bypasses the deadline wrapper"
+}
+bad="$(grep -rn '\.command = ' "$root"/*.qml 2>/dev/null | grep -v 'boundedCommand' || true)"
+[[ -z "$bad" ]] || {
+  printf '%s\n' "$bad" >&2
+  fail "Process command assignment bypasses the deadline wrapper"
+}
+
 echo "== normal completion preserves stdout and exit status"
 set +e
 output="$(bounded 10 bash -c 'printf "guard-ok\n"; exit 7')"
