@@ -929,10 +929,16 @@ Item {
 
   function openTrash() {
     hideTimer.stop()
-    // gio trash:// works on GNOME, fallback to the Trash/files path
-    Quickshell.execDetached(["bash", "-c", "xdg-open trash:/// 2>/dev/null || xdg-open \"" + root.trashFilesPath + "\" 2>/dev/null || xdg-open ~/.local/share/Trash 2>/dev/null &"])
+    // xdg-open exits 0 even when nothing handles trash:// and then hands the
+    // URL to the web browser, so a "try A || try B" chain never reaches its
+    // fallback. Ask for the registered handler first, and otherwise open the
+    // Trash files directory in the default file manager. The path is a
+    // positional argument, never interpolated into the script.
+    Quickshell.execDetached(["bash", "-c",
+      "if [ -n \"$(xdg-mime query default x-scheme-handler/trash 2>/dev/null)\" ]; then " +
+      "exec xdg-open trash:///; else mkdir -p \"$1\"; exec xdg-open \"$1\"; fi",
+      "_", root.trashFilesPath])
   }
-
   function emptyTrash() {
     Quickshell.execDetached(["bash", "-c", "gio trash --empty 2>/dev/null || rm -rf ~/.local/share/Trash/files/* ~/.local/share/Trash/info/* 2>/dev/null &"])
     // Refresh status after a short delay
