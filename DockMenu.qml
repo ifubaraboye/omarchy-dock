@@ -4,6 +4,7 @@ import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "DockSubmenu.js" as DockSubmenu
 
 // macOS-style context menu: window titles first (click to focus, checkmark on
 // the focused window, minimized titles dimmed), then New Window, an Options ▸
@@ -35,29 +36,51 @@ PanelWindow {
   // menu on the icon and let the clamps keep it on screen.
   readonly property bool fromBottomDock: requestedPosition.y > root.height - 300
 
-  // Submenu discipline, the way macOS does it: a flyout is open while the
-  // pointer is on its row or anywhere inside it, and closes a short grace
-  // period after the pointer leaves. Every hover source — the row, the
-  // flyout's padding, and the flyout rows themselves (via MenuRow.closeTimer)
-  // — stops the shared timer on enter and restarts it on leave; the timer
-  // then closes the flyout only if nothing re-entered in time. Hover over a
-  // flyout row is invisible to a background MouseArea (Qt delivers hover to
-  // the topmost acceptor only), which is why the rows manage the timer too.
+  // Submenu discipline lives in DockSubmenu.js, held to 100% line/branch/
+  // function coverage by tests/run.sh: a flyout opens on its row, stays up
+  // while any hover source is active (row, flyout padding, flyout rows — a
+  // background MouseArea cannot see hover over the rows, Qt delivers it to
+  // the topmost acceptor only, so rows report through hoverSink), and closes
+  // only when nothing re-entered by the time the grace timer elapses. The
+  // QML owns the bindable open flags and the timers; the module owns the
+  // decisions.
   property bool optionsOpen: false
   property bool positionOpen: false
+  property var optionsState: DockSubmenu.create()
+  property var positionState: DockSubmenu.create()
 
   Timer {
     id: optionsCloseTimer
     interval: 350
-    onTriggered: if (!optionsRowMouse.containsMouse && !optionsFlyoutMouse.containsMouse) root.optionsOpen = false
+    onTriggered: if (DockSubmenu.graceElapsed(root.optionsState).close) root.optionsOpen = false
   }
   Timer {
     id: positionCloseTimer
     interval: 350
-    onTriggered: if (!positionRowMouse.containsMouse && !positionFlyoutMouse.containsMouse) root.positionOpen = false
+    onTriggered: if (DockSubmenu.graceElapsed(root.positionState).close) root.positionOpen = false
   }
 
-  onOpenedChanged: if (!opened) { optionsOpen = false; positionOpen = false; optionsCloseTimer.stop(); positionCloseTimer.stop() }
+  function optionsHover(source, inside) {
+    var ev = inside ? DockSubmenu.entered(root.optionsState, source) : DockSubmenu.exited(root.optionsState, source)
+    if (ev.open) root.optionsOpen = true
+    if (ev.stopGrace) optionsCloseTimer.stop()
+    if (ev.startGrace) optionsCloseTimer.restart()
+  }
+  function positionHover(source, inside) {
+    var ev = inside ? DockSubmenu.entered(root.positionState, source) : DockSubmenu.exited(root.positionState, source)
+    if (ev.open) root.positionOpen = true
+    if (ev.stopGrace) positionCloseTimer.stop()
+    if (ev.startGrace) positionCloseTimer.restart()
+  }
+
+  onOpenedChanged: if (!opened) {
+    DockSubmenu.menuClosed(root.optionsState)
+    DockSubmenu.menuClosed(root.positionState)
+    optionsOpen = false
+    positionOpen = false
+    optionsCloseTimer.stop()
+    positionCloseTimer.stop()
+  }
 
   signal actionTriggered(string action, var itemData)
 
@@ -154,10 +177,7 @@ PanelWindow {
           anchors.fill: parent
           hoverEnabled: true
           acceptedButtons: Qt.NoButton
-          onContainsMouseChanged: {
-            if (containsMouse) { root.optionsOpen = true; optionsCloseTimer.stop() }
-            else optionsCloseTimer.restart()
-          }
+          onContainsMouseChanged: root.optionsHover("row", containsMouse)
         }
       }
 
@@ -219,10 +239,7 @@ PanelWindow {
           anchors.fill: parent
           hoverEnabled: true
           acceptedButtons: Qt.NoButton
-          onContainsMouseChanged: {
-            if (containsMouse) { root.positionOpen = true; positionCloseTimer.stop() }
-            else positionCloseTimer.restart()
-          }
+          onContainsMouseChanged: root.positionHover("row", containsMouse)
         }
       }
 
@@ -263,7 +280,8 @@ PanelWindow {
 
       MenuRow {
         id: keepRow
-        closeTimer: optionsCloseTimer
+        hoverSink: root.optionsHover
+        hoverSource: "keep"
         label: strings.t("menu.keepInDock")
         checked: root.isPinned
         action: "togglePin"
@@ -271,7 +289,8 @@ PanelWindow {
       MenuDivider {}
       MenuRow {
         id: changeRow
-        closeTimer: optionsCloseTimer
+        hoverSink: root.optionsHover
+        hoverSource: "change"
         label: strings.t("menu.changeIconEllipsis")
         action: "setIcon"
       }
@@ -283,7 +302,7 @@ PanelWindow {
       anchors.fill: parent
       hoverEnabled: true
       acceptedButtons: Qt.NoButton
-      onContainsMouseChanged: containsMouse ? optionsCloseTimer.stop() : optionsCloseTimer.restart()
+      onContainsMouseChanged: root.optionsHover("padding", containsMouse)
     }
   }
 
@@ -314,21 +333,24 @@ PanelWindow {
 
       MenuRow {
         id: positionLeftRow
-        closeTimer: positionCloseTimer
+        hoverSink: root.positionHover
+        hoverSource: "left"
         label: strings.t("menu.left")
         checked: root.dockSideCurrent === "left"
         action: "setSideLeft"
       }
       MenuRow {
         id: positionBottomRow
-        closeTimer: positionCloseTimer
+        hoverSink: root.positionHover
+        hoverSource: "bottom"
         label: strings.t("menu.bottom")
         checked: root.dockSideCurrent === "bottom"
         action: "setSideBottom"
       }
       MenuRow {
         id: positionRightRow
-        closeTimer: positionCloseTimer
+        hoverSink: root.positionHover
+        hoverSource: "right"
         label: strings.t("menu.right")
         checked: root.dockSideCurrent === "right"
         action: "setSideRight"
@@ -340,7 +362,7 @@ PanelWindow {
       anchors.fill: parent
       hoverEnabled: true
       acceptedButtons: Qt.NoButton
-      onContainsMouseChanged: containsMouse ? positionCloseTimer.stop() : positionCloseTimer.restart()
+      onContainsMouseChanged: root.positionHover("padding", containsMouse)
     }
   }
 
@@ -352,7 +374,8 @@ PanelWindow {
     property bool checked: false
     property bool dimmed: false
     property bool closeOnTrigger: true
-    property var closeTimer: null
+    property var hoverSink: null
+    property string hoverSource: ""
 
     width: parent.width
     height: 26
@@ -394,10 +417,10 @@ PanelWindow {
         if (row.closeOnTrigger) root.opened = false
         root.actionTriggered(row.action, root.itemData)
       }
-      onContainsMouseChanged: if (row.closeTimer) {
-        if (containsMouse) row.closeTimer.stop()
-        else row.closeTimer.restart()
-      }
+      // Flyout rows report their own hover: a background MouseArea cannot
+      // see them (Qt delivers hover to the topmost acceptor only), so they
+      // feed the submenu state machine directly.
+      onContainsMouseChanged: if (row.hoverSink) row.hoverSink(row.hoverSource, containsMouse)
     }
   }
 
