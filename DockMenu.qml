@@ -26,7 +26,6 @@ PanelWindow {
   property string mode: "app"
   property bool dockHiding: true
   property string dockSideCurrent: "bottom"
-  property bool positionOpen: false
 
   readonly property bool isSpecial: itemData !== null && (itemData.id === "downloads" || itemData.id === "trash")
   readonly property bool isRunning: itemData !== null && itemData.running === true
@@ -35,8 +34,30 @@ PanelWindow {
   // menu belongs above the click. Anywhere else is a side dock: center the
   // menu on the icon and let the clamps keep it on screen.
   readonly property bool fromBottomDock: requestedPosition.y > root.height - 300
-  // The Options flyout stays up while the pointer is on its row or itself.
+
+  // Submenu discipline, the way macOS does it: a flyout is open while the
+  // pointer is on its row or anywhere inside it, and closes a short grace
+  // period after the pointer leaves. Every hover source — the row, the
+  // flyout's padding, and the flyout rows themselves (via MenuRow.closeTimer)
+  // — stops the shared timer on enter and restarts it on leave; the timer
+  // then closes the flyout only if nothing re-entered in time. Hover over a
+  // flyout row is invisible to a background MouseArea (Qt delivers hover to
+  // the topmost acceptor only), which is why the rows manage the timer too.
   property bool optionsOpen: false
+  property bool positionOpen: false
+
+  Timer {
+    id: optionsCloseTimer
+    interval: 350
+    onTriggered: if (!optionsRowMouse.containsMouse && !optionsFlyoutMouse.containsMouse) root.optionsOpen = false
+  }
+  Timer {
+    id: positionCloseTimer
+    interval: 350
+    onTriggered: if (!positionRowMouse.containsMouse && !positionFlyoutMouse.containsMouse) root.positionOpen = false
+  }
+
+  onOpenedChanged: if (!opened) { optionsOpen = false; positionOpen = false; optionsCloseTimer.stop(); positionCloseTimer.stop() }
 
   signal actionTriggered(string action, var itemData)
 
@@ -133,7 +154,10 @@ PanelWindow {
           anchors.fill: parent
           hoverEnabled: true
           acceptedButtons: Qt.NoButton
-          onContainsMouseChanged: if (containsMouse) root.optionsOpen = true
+          onContainsMouseChanged: {
+            if (containsMouse) { root.optionsOpen = true; optionsCloseTimer.stop() }
+            else optionsCloseTimer.restart()
+          }
         }
       }
 
@@ -195,7 +219,10 @@ PanelWindow {
           anchors.fill: parent
           hoverEnabled: true
           acceptedButtons: Qt.NoButton
-          onContainsMouseChanged: if (containsMouse) root.positionOpen = true
+          onContainsMouseChanged: {
+            if (containsMouse) { root.positionOpen = true; positionCloseTimer.stop() }
+            else positionCloseTimer.restart()
+          }
         }
       }
 
@@ -235,23 +262,28 @@ PanelWindow {
       spacing: 0
 
       MenuRow {
+        id: keepRow
+        closeTimer: optionsCloseTimer
         label: strings.t("menu.keepInDock")
         checked: root.isPinned
         action: "togglePin"
       }
       MenuDivider {}
       MenuRow {
+        id: changeRow
+        closeTimer: optionsCloseTimer
         label: strings.t("menu.changeIconEllipsis")
         action: "setIcon"
       }
     }
 
-    // Hover-only: keeps the flyout up without eating its rows' clicks.
+    // Hover-only: reports padding hover without eating its rows' clicks.
     MouseArea {
+      id: optionsFlyoutMouse
       anchors.fill: parent
       hoverEnabled: true
       acceptedButtons: Qt.NoButton
-      onContainsMouseChanged: if (!containsMouse && !optionsRowMouse.containsMouse) root.optionsOpen = false
+      onContainsMouseChanged: containsMouse ? optionsCloseTimer.stop() : optionsCloseTimer.restart()
     }
   }
 
@@ -281,16 +313,22 @@ PanelWindow {
       spacing: 0
 
       MenuRow {
+        id: positionLeftRow
+        closeTimer: positionCloseTimer
         label: strings.t("menu.left")
         checked: root.dockSideCurrent === "left"
         action: "setSideLeft"
       }
       MenuRow {
+        id: positionBottomRow
+        closeTimer: positionCloseTimer
         label: strings.t("menu.bottom")
         checked: root.dockSideCurrent === "bottom"
         action: "setSideBottom"
       }
       MenuRow {
+        id: positionRightRow
+        closeTimer: positionCloseTimer
         label: strings.t("menu.right")
         checked: root.dockSideCurrent === "right"
         action: "setSideRight"
@@ -298,10 +336,11 @@ PanelWindow {
     }
 
     MouseArea {
+      id: positionFlyoutMouse
       anchors.fill: parent
       hoverEnabled: true
       acceptedButtons: Qt.NoButton
-      onContainsMouseChanged: if (!containsMouse && !positionRowMouse.containsMouse) root.positionOpen = false
+      onContainsMouseChanged: containsMouse ? positionCloseTimer.stop() : positionCloseTimer.restart()
     }
   }
 
@@ -313,6 +352,7 @@ PanelWindow {
     property bool checked: false
     property bool dimmed: false
     property bool closeOnTrigger: true
+    property var closeTimer: null
 
     width: parent.width
     height: 26
@@ -353,6 +393,10 @@ PanelWindow {
       onClicked: {
         if (row.closeOnTrigger) root.opened = false
         root.actionTriggered(row.action, root.itemData)
+      }
+      onContainsMouseChanged: if (row.closeTimer) {
+        if (containsMouse) row.closeTimer.stop()
+        else row.closeTimer.restart()
       }
     }
   }
