@@ -1106,16 +1106,59 @@ Item {
     root.refreshItems()
   }
 
-  function openMenu(item, position) {
+  function openMenu(item, position, hostScreenName) {
     root.tooltipItem = null
     root.hidePreview()
     root.menuOpen = true
+    dockMenu.mode = "app"
     dockMenu.itemData = item
-    dockMenu.requestedPosition = Qt.point(position.x, position.y - dockMenu.height - 12)
+    // macOS lists the app's open windows above everything else; capture them
+    // at open time. gatherWindowsForApp returns [] for folders and closed apps.
+    dockMenu.windows = item && item.id ? root.gatherWindowsForApp(item.id) : []
+    // The click point is in the host dock window's scene space; show the menu
+    // on the same output so the two coordinate spaces coincide (multi-monitor).
+    if (hostScreenName) {
+      var screens = Quickshell.screens || []
+      for (var i = 0; i < screens.length; i++) {
+        if (screens[i] && screens[i].name === hostScreenName) {
+          dockMenu.screen = screens[i]
+          break
+        }
+      }
+    }
+    dockMenu.requestedPosition = Qt.point(position.x, position.y)
+    dockMenu.opened = true
+  }
+
+  // Empty-space right-click: the macOS divider menu — dock-level controls
+  // (hiding, position) plus the dock's own settings surface.
+  function openDockMenu(position, hostScreenName) {
+    root.tooltipItem = null
+    root.hidePreview()
+    root.menuOpen = true
+    dockMenu.mode = "dock"
+    dockMenu.itemData = null
+    dockMenu.windows = []
+    if (hostScreenName) {
+      var screens = Quickshell.screens || []
+      for (var i = 0; i < screens.length; i++) {
+        if (screens[i] && screens[i].name === hostScreenName) {
+          dockMenu.screen = screens[i]
+          break
+        }
+      }
+    }
+    dockMenu.requestedPosition = Qt.point(position.x, position.y)
     dockMenu.opened = true
   }
 
   function menuAction(action, item) {
+    // Window rows encode their target address in the action string, so the
+    // existing one-argument IPC shape carries the focus target.
+    if (action.indexOf("focusWindow:") === 0) {
+      root.focusWindowAddress(action.slice("focusWindow:".length))
+      return
+    }
     if (action === "toggleAutoHide") {
       root.autoHide = !root.autoHide
       root.saveSettings()
@@ -1143,12 +1186,16 @@ Item {
         return
       }
     }
+    // Dock-mode rows run without an item; manageIcons only needs the picker.
+    if (action === "manageIcons") {
+      root.openIconManager(item)
+      return
+    }
     if (!item) return
     if (action === "togglePin") root.pinnedIds = DockModel.togglePinned(root.pinnedIds, item.id)
     else if (action === "newWindow") handleClick({ id: item.id, name: item.name, running: false })
     else if (action === "close") closeWindow(item.id)
     else if (action === "setIcon") root.openIconPicker(item.id, item.name, false, true)
-    else if (action === "manageIcons") root.openIconManager(item)
     if (action === "togglePin") { refreshItems(); savePinned() }
   }
 
@@ -2098,7 +2145,7 @@ Item {
                   animationEnabled: wrapper.animating
                   iconSourceOverride: root.iconSourceFor(modelData)
                   onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
-                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position, dockWindow.outputName) }
                   onLaunchBounceFinished: root.finishLaunchBounce(modelData)
                   onDragMoved: function(draggedItem, position) {
                     root.onDragMoved(draggedItem,
@@ -2208,7 +2255,7 @@ Item {
                     if (specialWrapper.specialId === "downloads") root.openDownloads()
                     else root.openTrash()
                   }
-                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position, dockWindow.outputName) }
                   onTooltipRequested: function(hoveredItem, isVisible, center) {
                     root.markActiveScreen(dockWindow.outputName)
                     root.tooltipCenterX = root.vertical ? center.y : center.x
@@ -2243,7 +2290,7 @@ Item {
               root.applyLayout()
             }
             onClicked: function(mouse) {
-              if (mouse.button === Qt.RightButton) root.openIconManager()
+              if (mouse.button === Qt.RightButton) root.openDockMenu(mouseArea.mapToItem(null, mouse.x, mouse.y), dockWindow.outputName)
             }
           }
         }
@@ -2329,8 +2376,8 @@ Item {
 
   DockMenu {
     id: dockMenu
-    autoHideEnabled: root.autoHide
-    dockSide: root.dockSide
+    dockHiding: root.autoHide
+    dockSideCurrent: root.dockSide
     iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false
@@ -2351,7 +2398,7 @@ Item {
       // menu. Without the deferred handoff, its back button can remain as a
       // small orphaned input surface above the newly opened menu.
       Qt.callLater(function() {
-        if (previousItem) root.openMenu(previousItem, Qt.point(root.width / 2, root.height / 2))
+        if (previousItem) root.openMenu(previousItem, Qt.point(root.width / 2, root.height / 2), dockMenu.screen ? dockMenu.screen.name : "")
       })
     }
     onOpenChanged: {
