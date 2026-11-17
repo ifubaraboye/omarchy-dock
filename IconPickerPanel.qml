@@ -133,15 +133,21 @@ PanelWindow {
     if (!/^https:\/\//.test(key)) return
     if (!root.helperPath) return
     root.previewQueued[key] = true
-    root.previewQueue.push(key)
+    // Replace the array: an in-place push on a `property var` list is not kept.
+    root.previewQueue = root.previewQueue.concat([key])
     root.pumpPreviewQueue()
   }
 
   function pumpPreviewQueue() {
     if (root.previewRunning || root.previewQueue.length === 0 || !root.helperPath) return
-    var url = root.previewQueue.shift()
+    var pending = root.previewQueue.slice()
+    var url = pending.shift()
+    root.previewQueue = pending
     previewProcess.requestedUrl = url
     previewProcess.output = ""
+    previewProcess.exited = false
+    previewProcess.streamDone = false
+    previewProcess.exitCode = -1
     previewProcess.command = root.boundedCommand(75, [root.helperPath, "preview", url])
     root.previewRunning = true
     previewProcess.running = true
@@ -317,9 +323,12 @@ PanelWindow {
           return
         }
         var parsed = IconSearch.parseResponse(text)
-        root.results = parsed
+        // Reset the preview queue first: assigning the results creates the grid
+        // delegates, which enqueue their previews right away. Clearing the queue
+        // afterwards threw all of them (except the one already running) away.
         root.previewQueue = []
         root.previewQueued = ({})
+        root.results = parsed
         if (parsed.length > 0)
           root.statusText = strings.tn("picker.iconsFound", parsed.length).arg(Commons.I18n.formatNumber(parsed.length))
         else
@@ -346,21 +355,42 @@ PanelWindow {
     id: previewProcess
     property string requestedUrl: ""
     property string output: ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: previewProcess.output = text.trim()
-    }
-    onExited: function(exitCode) {
+    // The process can report "exited" before or after its stdout collector
+    // reports "finished". Acting on whichever came first lost the path when the
+    // exit arrived early, so most previews never showed. Finish only when both
+    // have happened.
+    property bool exited: false
+    property bool streamDone: false
+    property int exitCode: -1
+
+    function finish() {
+      if (!previewProcess.exited || !previewProcess.streamDone) return
       var url = previewProcess.requestedUrl
       root.previewRunning = false
       delete root.previewQueued[url]
-      if (exitCode === 0 && previewProcess.output !== "") {
+      if (previewProcess.exitCode === 0 && previewProcess.output !== "") {
         root.previewPaths[url] = previewProcess.output
         root.previewRevision++
       }
       previewProcess.output = ""
       previewProcess.requestedUrl = ""
+      previewProcess.exited = false
+      previewProcess.streamDone = false
       root.pumpPreviewQueue()
+    }
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        previewProcess.output = text.trim()
+        previewProcess.streamDone = true
+        previewProcess.finish()
+      }
+    }
+    onExited: function(exitCode) {
+      previewProcess.exitCode = exitCode
+      previewProcess.exited = true
+      previewProcess.finish()
     }
   }
 
