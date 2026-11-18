@@ -24,6 +24,7 @@ Item {
   property var pinnedIds: []
   property var dockOrder: []
   property bool pinFileLoaded: false
+  property var shellPinsSeen: null
   // Our temp+rename writes make the pin-file watcher fire before FileView's
   // async re-read finishes, so onFileChanged can observe stale text(). The
   // reload() path re-reads fresh, and this window skips watcher events that
@@ -1097,6 +1098,10 @@ Item {
   }
 
   function savePinned() {
+    // Never write before the pin file's first read has completed: an early
+    // write (an import racing the pin load) would serialize an incomplete
+    // list and clobber pins that were never loaded.
+    if (!root.pinFileLoaded) return
     var content = DockModel.serializePinned(root.pinnedIds, root.dockOrder)
     root.ownWriteUntil = Date.now() + 2000
     DockModel.markWritten(content)
@@ -1104,6 +1109,51 @@ Item {
     // itself; the previous manual .tmp + mv Process never completed.
     pinFile.setText(content)
     root.refreshItems()
+  }
+
+  // Pin bridge from the stock Omarchy dock: the app grid's "Keep in Dock"
+  // and "Remove from Dock" write the stock dock's pin list (shell.json's
+  // dock section), and this dock mirrors both directions for the apps that
+  // list manages. Newly added ids are imported; ids that LEAVE the list are
+  // unpinned here too. Removals only apply to ids that were seen in the
+  // list, so pins this dock owns outright are never touched. The first load
+  // of a session only records a baseline — neither importing nor removing —
+  // so an earlier session's direct-dock removals stay removed, and unrelated
+  // shell.json rewrites (the shell saves it constantly) never resurrect or
+  // drop anything.
+  function importShellPins(text) {
+    try {
+      var parsed = JSON.parse(String(text || ""))
+      var stock = parsed && parsed.dock && Array.isArray(parsed.dock.pinned) ? parsed.dock.pinned : []
+      var normalized = []
+      for (var s = 0; s < stock.length; s++) {
+        var sid = DockModel.stripDesktop(String(stock[s] || ""))
+        if (sid && normalized.indexOf(sid) === -1) normalized.push(sid)
+      }
+      if (!root.pinFileLoaded || root.shellPinsSeen === null) {
+        root.shellPinsSeen = normalized
+        return
+      }
+      var changed = false
+      for (var i = 0; i < normalized.length; i++) {
+        var id = normalized[i]
+        if (root.shellPinsSeen.indexOf(id) === -1 && root.pinnedIds.indexOf(id) === -1) {
+          root.pinnedIds.push(id)
+          changed = true
+        }
+      }
+      // Ids that left the grid's list: unpin here too, so the app grid's
+      // "Remove from Dock" actually removes from this dock.
+      for (var r = 0; r < root.shellPinsSeen.length; r++) {
+        var gone = root.shellPinsSeen[r]
+        if (normalized.indexOf(gone) === -1 && root.pinnedIds.indexOf(gone) !== -1) {
+          root.pinnedIds = DockModel.removePinned(root.pinnedIds, gone)
+          changed = true
+        }
+      }
+      root.shellPinsSeen = normalized
+      if (changed) { refreshItems(); savePinned() }
+    } catch (error) {}
   }
 
   function openMenu(item, position, hostScreenName) {
@@ -1781,6 +1831,19 @@ Item {
       root.pinnedIds = DockModel.DEFAULT_PINNED.slice()
       root.refreshItems()
     }
+  }
+
+  // The stock dock's pin list, watched for the app grid's "Keep in Dock"
+  // and "Remove from Dock": mirrored both ways for the ids that list
+  // manages (see importShellPins). shell.json is Omarchy's own config; never
+  // written here.
+  FileView {
+    id: shellDockFile
+    path: Quickshell.env("HOME") + "/.config/omarchy/shell.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.importShellPins(text())
+    onFileChanged: shellDockFile.reload()
   }
 
   FileView {
