@@ -24,6 +24,7 @@ Item {
   property var pinnedIds: []
   property var dockOrder: []
   property bool pinFileLoaded: false
+  property var shellPinsSeen: null
   // Our temp+rename writes make the pin-file watcher fire before FileView's
   // async re-read finishes, so onFileChanged can observe stale text(). The
   // reload() path re-reads fresh, and this window skips watcher events that
@@ -1097,6 +1098,10 @@ Item {
   }
 
   function savePinned() {
+    // Never write before the pin file's first read has completed: an early
+    // write (an import racing the pin load) would serialize an incomplete
+    // list and clobber pins that were never loaded.
+    if (!root.pinFileLoaded) return
     var content = DockModel.serializePinned(root.pinnedIds, root.dockOrder)
     root.ownWriteUntil = Date.now() + 2000
     DockModel.markWritten(content)
@@ -1106,16 +1111,104 @@ Item {
     root.refreshItems()
   }
 
-  function openMenu(item, position) {
+  // Pin bridge from the stock Omarchy dock: the app grid's "Keep in Dock"
+  // and "Remove from Dock" write the stock dock's pin list (shell.json's
+  // dock section), and this dock mirrors both directions for the apps that
+  // list manages. Newly added ids are imported; ids that LEAVE the list are
+  // unpinned here too. Removals only apply to ids that were seen in the
+  // list, so pins this dock owns outright are never touched. The first load
+  // of a session only records a baseline — neither importing nor removing —
+  // so an earlier session's direct-dock removals stay removed, and unrelated
+  // shell.json rewrites (the shell saves it constantly) never resurrect or
+  // drop anything.
+  function importShellPins(text) {
+    try {
+      var parsed = JSON.parse(String(text || ""))
+      var stock = parsed && parsed.dock && Array.isArray(parsed.dock.pinned) ? parsed.dock.pinned : []
+      var normalized = []
+      for (var s = 0; s < stock.length; s++) {
+        var sid = DockModel.stripDesktop(String(stock[s] || ""))
+        if (sid && normalized.indexOf(sid) === -1) normalized.push(sid)
+      }
+      if (!root.pinFileLoaded || root.shellPinsSeen === null) {
+        root.shellPinsSeen = normalized
+        return
+      }
+      var changed = false
+      for (var i = 0; i < normalized.length; i++) {
+        var id = normalized[i]
+        if (root.shellPinsSeen.indexOf(id) === -1 && root.pinnedIds.indexOf(id) === -1) {
+          root.pinnedIds.push(id)
+          changed = true
+        }
+      }
+      // Ids that left the grid's list: unpin here too, so the app grid's
+      // "Remove from Dock" actually removes from this dock.
+      for (var r = 0; r < root.shellPinsSeen.length; r++) {
+        var gone = root.shellPinsSeen[r]
+        if (normalized.indexOf(gone) === -1 && root.pinnedIds.indexOf(gone) !== -1) {
+          root.pinnedIds = DockModel.removePinned(root.pinnedIds, gone)
+          changed = true
+        }
+      }
+      root.shellPinsSeen = normalized
+      if (changed) { refreshItems(); savePinned() }
+    } catch (error) {}
+  }
+
+  function openMenu(item, position, hostScreenName) {
     root.tooltipItem = null
     root.hidePreview()
     root.menuOpen = true
+    dockMenu.mode = "app"
     dockMenu.itemData = item
-    dockMenu.requestedPosition = Qt.point(position.x, position.y - dockMenu.height - 12)
+    // macOS lists the app's open windows above everything else; capture them
+    // at open time. gatherWindowsForApp returns [] for folders and closed apps.
+    dockMenu.windows = item && item.id ? root.gatherWindowsForApp(item.id) : []
+    // The click point is in the host dock window's scene space; show the menu
+    // on the same output so the two coordinate spaces coincide (multi-monitor).
+    if (hostScreenName) {
+      var screens = Quickshell.screens || []
+      for (var i = 0; i < screens.length; i++) {
+        if (screens[i] && screens[i].name === hostScreenName) {
+          dockMenu.screen = screens[i]
+          break
+        }
+      }
+    }
+    dockMenu.requestedPosition = Qt.point(position.x, position.y)
+    dockMenu.opened = true
+  }
+
+  // Empty-space right-click: the macOS divider menu — dock-level controls
+  // (hiding, position) plus the dock's own settings surface.
+  function openDockMenu(position, hostScreenName) {
+    root.tooltipItem = null
+    root.hidePreview()
+    root.menuOpen = true
+    dockMenu.mode = "dock"
+    dockMenu.itemData = null
+    dockMenu.windows = []
+    if (hostScreenName) {
+      var screens = Quickshell.screens || []
+      for (var i = 0; i < screens.length; i++) {
+        if (screens[i] && screens[i].name === hostScreenName) {
+          dockMenu.screen = screens[i]
+          break
+        }
+      }
+    }
+    dockMenu.requestedPosition = Qt.point(position.x, position.y)
     dockMenu.opened = true
   }
 
   function menuAction(action, item) {
+    // Window rows encode their target address in the action string, so the
+    // existing one-argument IPC shape carries the focus target.
+    if (action.indexOf("focusWindow:") === 0) {
+      root.focusWindowAddress(action.slice("focusWindow:".length))
+      return
+    }
     if (action === "toggleAutoHide") {
       root.autoHide = !root.autoHide
       root.saveSettings()
@@ -1143,12 +1236,16 @@ Item {
         return
       }
     }
+    // Dock-mode rows run without an item; manageIcons only needs the picker.
+    if (action === "manageIcons") {
+      root.openIconManager(item)
+      return
+    }
     if (!item) return
     if (action === "togglePin") root.pinnedIds = DockModel.togglePinned(root.pinnedIds, item.id)
     else if (action === "newWindow") handleClick({ id: item.id, name: item.name, running: false })
     else if (action === "close") closeWindow(item.id)
     else if (action === "setIcon") root.openIconPicker(item.id, item.name, false, true)
-    else if (action === "manageIcons") root.openIconManager(item)
     if (action === "togglePin") { refreshItems(); savePinned() }
   }
 
@@ -1736,6 +1833,19 @@ Item {
     }
   }
 
+  // The stock dock's pin list, watched for the app grid's "Keep in Dock"
+  // and "Remove from Dock": mirrored both ways for the ids that list
+  // manages (see importShellPins). shell.json is Omarchy's own config; never
+  // written here.
+  FileView {
+    id: shellDockFile
+    path: Quickshell.env("HOME") + "/.config/omarchy/shell.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.importShellPins(text())
+    onFileChanged: shellDockFile.reload()
+  }
+
   FileView {
     id: settingsFile
     path: root.settingsPath
@@ -2098,7 +2208,7 @@ Item {
                   animationEnabled: wrapper.animating
                   iconSourceOverride: root.iconSourceFor(modelData)
                   onItemLeftClicked: function(clickedItem) { root.handleClick(clickedItem) }
-                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position, dockWindow.outputName) }
                   onLaunchBounceFinished: root.finishLaunchBounce(modelData)
                   onDragMoved: function(draggedItem, position) {
                     root.onDragMoved(draggedItem,
@@ -2208,7 +2318,7 @@ Item {
                     if (specialWrapper.specialId === "downloads") root.openDownloads()
                     else root.openTrash()
                   }
-                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position) }
+                  onItemRightClicked: function(clickedItem, position) { root.openMenu(clickedItem, position, dockWindow.outputName) }
                   onTooltipRequested: function(hoveredItem, isVisible, center) {
                     root.markActiveScreen(dockWindow.outputName)
                     root.tooltipCenterX = root.vertical ? center.y : center.x
@@ -2243,7 +2353,7 @@ Item {
               root.applyLayout()
             }
             onClicked: function(mouse) {
-              if (mouse.button === Qt.RightButton) root.openIconManager()
+              if (mouse.button === Qt.RightButton) root.openDockMenu(mouseArea.mapToItem(null, mouse.x, mouse.y), dockWindow.outputName)
             }
           }
         }
@@ -2329,8 +2439,8 @@ Item {
 
   DockMenu {
     id: dockMenu
-    autoHideEnabled: root.autoHide
-    dockSide: root.dockSide
+    dockHiding: root.autoHide
+    dockSideCurrent: root.dockSide
     iconSource: root.iconSourceFor(dockMenu.itemData ? dockMenu.itemData.id : "")
     onActionTriggered: function(actionName, selectedItem) { root.menuAction(actionName, selectedItem) }
     onOpenedChanged: if (!opened) root.menuOpen = false
@@ -2351,7 +2461,7 @@ Item {
       // menu. Without the deferred handoff, its back button can remain as a
       // small orphaned input surface above the newly opened menu.
       Qt.callLater(function() {
-        if (previousItem) root.openMenu(previousItem, Qt.point(root.width / 2, root.height / 2))
+        if (previousItem) root.openMenu(previousItem, Qt.point(root.width / 2, root.height / 2), dockMenu.screen ? dockMenu.screen.name : "")
       })
     }
     onOpenChanged: {

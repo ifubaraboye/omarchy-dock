@@ -11,3 +11,4 @@ icons/
 dock-icons.json
 dock-settings.json
 dock-pinned-macos.json
+tests/.generated/
