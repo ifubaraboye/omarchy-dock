@@ -234,19 +234,33 @@ Behavior:
 ### Changing the keybind
 
 The registered binds live only for the current session (they are re-added at
-each shell start and never written to any config file). To use a different
-combination, add your own bind to `~/.config/hypr/bindings.lua` — your
-config-file bind takes precedence over the plugin's default:
+each shell start and never written to any config file). The plugin only
+replaces binds it recognizes as its own (`App switcher next` / `App switcher
+prev`) or as Omarchy's stock `ALT + TAB` window-cycling binds. Any other bind
+on one of these combos is treated as user-owned: the plugin leaves the whole
+combo alone, including while it re-checks the bindings during startup, so the
+takeover never removes a config-file bind.
+
+To add another combination for the switcher, add your own bind to
+`~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("ALT + TAB", "App switcher next", "omarchy-shell -q macos.dock altTabNext")
-o.bind("ALT + SHIFT + TAB", "App switcher prev", "omarchy-shell -q macos.dock altTabPrev")
+o.bind("SUPER + TAB", "App switcher next", "omarchy-shell -q macos.dock altTabNext")
+o.bind("SUPER + SHIFT + TAB", "App switcher prev", "omarchy-shell -q macos.dock altTabPrev")
 ```
 
-Note: Omarchy's default config already binds `ALT + TAB` to window cycling, so
-if you rebind to `ALT + TAB` you must first free it with `hl.unbind("ALT + TAB")`
-in your `bindings.lua` (and `hl.unbind("ALT + SHIFT + TAB")` for the previous
-direction).
+The plugin's default combos remain unless you override them. To take over one
+of them with a different action, free it first and use a description other
+than `App switcher next` / `App switcher prev`:
+
+```lua
+hl.unbind("ALT + TAB")
+o.bind("ALT + TAB", "My window switcher", "my-switcher next")
+```
+
+Note: Omarchy's default config already binds `ALT + TAB` to window cycling.
+If you add a bind on that combo without freeing it first, both actions remain;
+the plugin does not remove either of them.
 
 For testing without bindings:
 

@@ -2019,13 +2019,14 @@ Item {
     // both layer namespaces so the HUD pops in instantly.
     if (!layerRuleProcess.running) layerRuleProcess.running = true
     // Register the app-switcher keybinds so the HUD works out of the box.
-    // Config-file binds load before this runtime eval, so a user's own bind
-    // for the same combo takes precedence.
-    if (!altTabBindProcess.running) altTabBindProcess.running = true
+    // Query the live bind list first: a combo the user bound in
+    // ~/.config/hypr/bindings.lua must keep its action, and the startup
+    // retry below must not replace it after the config loads.
+    if (!altTabBindQuery.running) altTabBindQuery.running = true
     // The shell applies the config-file binds (tiling.lua etc.) AFTER this
-    // Component.onCompleted eval, clobbering our ALT+TAB takeover. Re-apply
-    // the eval on a short retry window until the config binds have landed;
-    // the eval is idempotent (unbind then bind).
+    // Component.onCompleted eval, clobbering our ALT+TAB takeover. Re-query
+    // on a short retry window and re-apply only the combos that are still
+    // ours or Omarchy's stock defaults; user-owned combos are never touched.
     altTabBindRetry.start()
     Qt.callLater(function() { root.dockReady = true })
   }
@@ -2045,17 +2046,32 @@ Item {
     onTriggered: {
       altTabBindRetry.attempts++
       if (altTabBindRetry.attempts > 8) altTabBindRetry.stop()
-      else if (!altTabBindProcess.running) altTabBindProcess.running = true
+      else if (!altTabBindQuery.running && !altTabBindProcess.running) altTabBindQuery.running = true
+    }
+  }
+
+  Process {
+    id: altTabBindQuery
+    // Read the live bind list rather than assuming the config file's binds
+    // landed. An unreadable list yields an empty plan, so a compositor hiccup
+    // can never turn into an unconditional unbind.
+    command: root.boundedCommand(5, ["hyprctl", "binds", "-j"])
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var lua = DockModel.altTabBindLua(DockModel.altTabTakeoverPlan(text))
+        if (!lua || altTabBindProcess.running) return
+        altTabBindProcess.command = root.boundedCommand(5, ["hyprctl", "eval", lua])
+        altTabBindProcess.running = true
+      }
     }
   }
 
   Process {
     id: altTabBindProcess
-    // Take over the default Omarchy ALT+TAB window cycling so the macOS-style
-    // app switcher HUD is the primary alt-tab. The defaults bind ALT+TAB twice
-    // (cycle + bring-to-top), so both must be unbound first. ALT+GRAVE stays
-    // as the dedicated fallback combo.
-    command: root.boundedCommand(5, ["hyprctl", "eval", "hl.unbind(\"ALT + TAB\") hl.unbind(\"ALT + SHIFT + TAB\") hl.unbind(\"ALT + GRAVE\") hl.unbind(\"ALT + SHIFT + GRAVE\") o.bind(\"ALT + TAB\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + TAB\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\") o.bind(\"ALT + GRAVE\", \"App switcher next\", \"omarchy-shell -q macos.dock altTabNext\") o.bind(\"ALT + SHIFT + GRAVE\", \"App switcher prev\", \"omarchy-shell -q macos.dock altTabPrev\")"])
+    // Set by altTabBindQuery. The eval only unbinds combos whose current
+    // binds are the plugin's own or Omarchy's stock ALT+TAB tiling binds, so
+    // a user's config-file bind keeps its action across the retry window.
   }
 
   Variants {

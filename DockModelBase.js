@@ -603,6 +603,142 @@ function markSettingsWritten(content) { lastSettingsHash = hashContent(content) 
 
 function resetSettingsGuard() { lastSettingsHash = null }
 
+// ---- App-switcher bind takeover (pure, testable) -----------------------
+// The plugin registers its app-switcher binds at runtime and intentionally
+// replaces Omarchy's stock ALT+TAB window cycling. A bind the user added in
+// ~/.config/hypr/bindings.lua must survive that takeover, including the
+// startup retry window that re-applies after the config is loaded. Ownership
+// is decided from `hyprctl binds -j`: a combo is replaceable only when every
+// bind on it is either one of ours ("App switcher next/prev") or part of
+// Omarchy's exact stock tiling set. Anything else is user-owned and left
+// alone.
+var ALT_TAB_ACTIONS = [
+    {
+        keys: "ALT + TAB",
+        modmask: 8,
+        key: "TAB",
+        description: "App switcher next",
+        command: "omarchy-shell -q macos.dock altTabNext",
+        stockDescriptions: ["Focus on next window", "Reveal active window on top"]
+    },
+    {
+        keys: "ALT + SHIFT + TAB",
+        modmask: 9,
+        key: "TAB",
+        description: "App switcher prev",
+        command: "omarchy-shell -q macos.dock altTabPrev",
+        stockDescriptions: ["Focus on previous window", "Reveal active window on top"]
+    },
+    {
+        keys: "ALT + GRAVE",
+        modmask: 8,
+        key: "GRAVE",
+        description: "App switcher next",
+        command: "omarchy-shell -q macos.dock altTabNext",
+        stockDescriptions: []
+    },
+    {
+        keys: "ALT + SHIFT + GRAVE",
+        modmask: 9,
+        key: "GRAVE",
+        description: "App switcher prev",
+        command: "omarchy-shell -q macos.dock altTabPrev",
+        stockDescriptions: []
+    }
+]
+
+function altTabBindReplaceable(bind, action) {
+    if (!bind) return false
+    if (Number(bind.modmask) !== action.modmask) return false
+    if (String(bind.key || "").toUpperCase() !== action.key) return false
+    // Only plain global press binds are candidates. A release, mouse, catch-all
+    // or submap bind on the same combo belongs to whoever configured it.
+    if (bind.mouse || bind.release || bind.catch_all) return false
+    if (String(bind.submap || "") !== "") return false
+    if (String(bind.dispatcher || "") !== "__lua") return false
+    var description = String(bind.description || "")
+    return description === action.description
+        || action.stockDescriptions.indexOf(description) !== -1
+}
+
+// A combo may be replaced when it has no binds, when every bind is ours, or
+// when Omarchy's complete stock set is present (optionally alongside ours).
+// A partial stock set means someone edited it, so it is user-owned.
+function altTabBindSetReplaceable(matching, action) {
+    if (!matching.length) return true
+    var stockLeft = action.stockDescriptions.slice()
+    var pluginCount = 0
+    for (var i = 0; i < matching.length; i++) {
+        var bind = matching[i]
+        if (!altTabBindReplaceable(bind, action)) return false
+        var description = String(bind.description || "")
+        if (description === action.description) {
+            pluginCount++
+            continue
+        }
+        var index = stockLeft.indexOf(description)
+        if (index === -1) return false
+        stockLeft.splice(index, 1)
+    }
+    return stockLeft.length === 0
+        || (pluginCount > 0 && pluginCount === matching.length)
+}
+
+// Returns the actions the plugin may (re)bind. An unreadable bind list yields
+// an empty plan: a failed compositor query must never become an unconditional
+// unbind. A combo with any unrecognized bind is omitted, so the user's action
+// keeps working for the whole session. `unbind` is false for a combo that was
+// free in the snapshot: a plain bind there cannot remove a bind that appeared
+// between the query and the eval.
+function altTabTakeoverPlan(binds) {
+    var list = binds
+    if (typeof list === "string") {
+        try {
+            list = JSON.parse(list)
+        } catch (error) {
+            return []
+        }
+    }
+    if (!Array.isArray(list)) return []
+    var plan = []
+    for (var i = 0; i < ALT_TAB_ACTIONS.length; i++) {
+        var action = ALT_TAB_ACTIONS[i]
+        var matching = []
+        for (var j = 0; j < list.length; j++) {
+            var bind = list[j]
+            if (!bind) continue
+            if (Number(bind.modmask) !== action.modmask) continue
+            if (String(bind.key || "").toUpperCase() !== action.key) continue
+            matching.push(bind)
+        }
+        if (altTabBindSetReplaceable(matching, action))
+            plan.push({ action: action, unbind: matching.length > 0 })
+    }
+    return plan
+}
+
+function luaQuote(value) {
+    return '"' + String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'
+}
+
+// Build the single runtime eval that unbinds and rebinds only the planned
+// combos. Accepts plan entries ({ action, unbind }) or bare actions. Combos
+// omitted by altTabTakeoverPlan are never named here, so the eval cannot
+// remove a user's bind.
+function altTabBindLua(entries) {
+    var list = Array.isArray(entries) ? entries : []
+    var parts = []
+    for (var i = 0; i < list.length; i++) {
+        var entry = list[i]
+        var action = entry && entry.action ? entry.action : entry
+        if (!action || !action.keys) continue
+        if (!entry || entry.unbind !== false) parts.push("hl.unbind(" + luaQuote(action.keys) + ")")
+        parts.push("o.bind(" + luaQuote(action.keys) + ", "
+            + luaQuote(action.description) + ", " + luaQuote(action.command) + ")")
+    }
+    return parts.join(" ")
+}
+
 // ---- Auto-hide state machine (pure, testable) --------------------------
 function shouldHideDock(state) {
     var s = state || {}
@@ -667,6 +803,8 @@ if (typeof module !== "undefined" && module.exports) {
         normalizeScreenMode: normalizeScreenMode,
         resolveScreenNames: resolveScreenNames,
         surfaceFor: surfaceFor,
+        altTabTakeoverPlan: altTabTakeoverPlan,
+        altTabBindLua: altTabBindLua,
         shouldReprocessSettings: shouldReprocessSettings,
         markSettingsWritten: markSettingsWritten,
         resetSettingsGuard: resetSettingsGuard,

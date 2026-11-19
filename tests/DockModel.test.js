@@ -418,6 +418,195 @@ test("auto-hide hide→reveal→hide cycle is deterministic", () => {
   assert.equal(model.shouldRevealDock(s), true)
 })
 
+// ---- App-switcher bind takeover -----------------------------------------
+
+function bind(modmask, key, description, extra) {
+  return {
+    modmask,
+    key,
+    description,
+    dispatcher: "__lua",
+    submap: "",
+    mouse: false,
+    release: false,
+    catch_all: false,
+    ...(extra || {}),
+  }
+}
+
+function stockAltTabBinds() {
+  return [
+    bind(8, "TAB", "Focus on next window"),
+    bind(8, "TAB", "Reveal active window on top"),
+    bind(9, "TAB", "Focus on previous window"),
+    bind(9, "TAB", "Reveal active window on top"),
+  ]
+}
+
+function plannedActions(plan) {
+  return Array.from(plan).map((entry) => (entry && entry.action ? entry.action : entry))
+}
+
+function plannedKeys(plan) {
+  return plannedActions(plan).map((action) => action.keys)
+}
+
+// Apply the eval's effect to a snapshot: only planned combos are unbound and
+// rebound. Used to model each startup retry without a compositor.
+function applyAltTabPlan(binds, plan) {
+  let next = binds.slice()
+  for (const entry of plan) {
+    const action = entry && entry.action ? entry.action : entry
+    if (!entry || entry.unbind !== false) {
+      next = next.filter((existing) => !(
+        Number(existing.modmask) === action.modmask
+        && String(existing.key || "").toUpperCase() === action.key
+      ))
+    }
+    next.push(bind(action.modmask, action.key, action.description))
+  }
+  return next
+}
+
+test("alt-tab takeover replaces Omarchy's stock tiling binds", () => {
+  const plan = model.altTabTakeoverPlan(stockAltTabBinds())
+  assert.deepEqual(plannedKeys(plan), [
+    "ALT + TAB",
+    "ALT + SHIFT + TAB",
+    "ALT + GRAVE",
+    "ALT + SHIFT + GRAVE",
+  ])
+  const lua = model.altTabBindLua(plan)
+  assert.equal(lua.includes('hl.unbind("ALT + TAB")'), true)
+  assert.equal(lua.includes('o.bind("ALT + GRAVE", "App switcher next", "omarchy-shell -q macos.dock altTabNext")'), true)
+})
+
+test("free combos are claimed by the app switcher", () => {
+  const plan = model.altTabTakeoverPlan([])
+  assert.deepEqual(plannedKeys(plan), [
+    "ALT + TAB",
+    "ALT + SHIFT + TAB",
+    "ALT + GRAVE",
+    "ALT + SHIFT + GRAVE",
+  ])
+  // A combo that was free in the snapshot is bound but never unbound, so a
+  // bind that appeared after the query cannot be removed by this eval.
+  assert.equal(model.altTabBindLua(plan).includes("hl.unbind"), false)
+})
+
+test("the plugin's own binds can be re-applied idempotently", () => {
+  const binds = [
+    bind(8, "TAB", "App switcher next"),
+    bind(9, "TAB", "App switcher prev"),
+    bind(8, "GRAVE", "App switcher next"),
+    bind(9, "GRAVE", "App switcher prev"),
+  ]
+  assert.equal(model.altTabTakeoverPlan(binds).length, 4)
+})
+
+test("a user-defined grave bind keeps its action across every startup retry", () => {
+  const userBind = bind(8, "GRAVE", "My launcher", { arg: "42" })
+  let binds = [userBind, ...stockAltTabBinds()]
+  // Component.onCompleted plus the eight retry attempts.
+  for (let attempt = 0; attempt <= 8; attempt++) {
+    const plan = model.altTabTakeoverPlan(binds)
+    assert.equal(plannedKeys(plan).includes("ALT + GRAVE"), false)
+    const lua = model.altTabBindLua(plan)
+    assert.equal(lua.includes('"ALT + GRAVE"'), false)
+    binds = applyAltTabPlan(binds, plan)
+  }
+  const survivor = binds.find((entry) => entry.description === "My launcher")
+  assert.deepEqual(survivor, userBind)
+})
+
+test("a user bind that lands after the first eval is left alone by the retry", () => {
+  // The first eval claimed all four combos. The config file then adds a user
+  // bind on ALT+GRAVE; the next retry must not unbind the combo to clean up
+  // its own bind, because that would take the user's action with it.
+  let binds = [
+    bind(8, "TAB", "App switcher next"),
+    bind(9, "TAB", "App switcher prev"),
+    bind(8, "GRAVE", "App switcher next"),
+    bind(9, "GRAVE", "App switcher prev"),
+  ]
+  const userBind = bind(8, "GRAVE", "My launcher", { arg: "42" })
+  binds.push(userBind)
+  const plan = model.altTabTakeoverPlan(binds)
+  assert.deepEqual(plannedKeys(plan), ["ALT + TAB", "ALT + SHIFT + TAB", "ALT + SHIFT + GRAVE"])
+  assert.equal(model.altTabBindLua(plan).includes('"ALT + GRAVE"'), false)
+  binds = applyAltTabPlan(binds, plan)
+  assert.deepEqual(binds.find((entry) => entry.description === "My launcher"), userBind)
+})
+
+test("a user-defined alt-tab bind is preserved while the other direction still takes over", () => {
+  const userBind = bind(8, "TAB", "My switcher")
+  const binds = [userBind, ...stockAltTabBinds()]
+  const plan = model.altTabTakeoverPlan(binds)
+  assert.deepEqual(plannedKeys(plan), [
+    "ALT + SHIFT + TAB",
+    "ALT + GRAVE",
+    "ALT + SHIFT + GRAVE",
+  ])
+  const lua = model.altTabBindLua(plan)
+  assert.equal(lua.includes('hl.unbind("ALT + TAB")'), false)
+  const survivor = applyAltTabPlan(binds, plan).find((entry) => entry.description === "My switcher")
+  assert.deepEqual(survivor, userBind)
+})
+
+test("release, submap, mouse and non-Lua binds on a combo are user-owned", () => {
+  assert.equal(
+    plannedKeys(model.altTabTakeoverPlan([bind(8, "GRAVE", "App switcher next", { release: true })])).includes("ALT + GRAVE"),
+    false,
+  )
+  assert.equal(
+    plannedKeys(model.altTabTakeoverPlan([bind(8, "GRAVE", "App switcher next", { submap: "resize" })])).includes("ALT + GRAVE"),
+    false,
+  )
+  assert.equal(
+    plannedKeys(model.altTabTakeoverPlan([bind(8, "TAB", "Focus on next window", { dispatcher: "exec" })])).includes("ALT + TAB"),
+    false,
+  )
+  assert.equal(
+    plannedKeys(model.altTabTakeoverPlan([bind(8, "TAB", "", { mouse: true })])).includes("ALT + TAB"),
+    false,
+  )
+  assert.equal(
+    plannedKeys(model.altTabTakeoverPlan([bind(8, "GRAVE", "App switcher next", { catch_all: true })])).includes("ALT + GRAVE"),
+    false,
+  )
+})
+
+test("a partial or duplicated stock bind set is user-owned", () => {
+  const partial = [bind(8, "TAB", "Focus on next window")]
+  assert.equal(plannedKeys(model.altTabTakeoverPlan(partial)).includes("ALT + TAB"), false)
+  const duplicate = [
+    bind(8, "TAB", "Focus on next window"),
+    bind(8, "TAB", "Focus on next window"),
+    bind(8, "TAB", "Reveal active window on top"),
+  ]
+  assert.equal(plannedKeys(model.altTabTakeoverPlan(duplicate)).includes("ALT + TAB"), false)
+})
+
+test("a complete stock set plus the plugin's own bind is still replaceable", () => {
+  const binds = stockAltTabBinds().filter((entry) => entry.modmask === 8)
+  binds.push(bind(8, "TAB", "App switcher next"))
+  assert.equal(plannedKeys(model.altTabTakeoverPlan(binds)).includes("ALT + TAB"), true)
+})
+
+test("an unreadable bind list disables the takeover instead of guessing", () => {
+  assert.deepEqual(Array.from(model.altTabTakeoverPlan("")), [])
+  assert.deepEqual(Array.from(model.altTabTakeoverPlan("not json")), [])
+  assert.deepEqual(Array.from(model.altTabTakeoverPlan(null)), [])
+  assert.deepEqual(Array.from(model.altTabTakeoverPlan({})), [])
+  assert.equal(model.altTabBindLua([]), "")
+})
+
+test("parses the live hyprctl JSON string passed by the query process", () => {
+  const binds = stockAltTabBinds().concat([bind(8, "GRAVE", "My launcher")])
+  const plan = model.altTabTakeoverPlan(JSON.stringify(binds))
+  assert.deepEqual(plannedKeys(plan), ["ALT + TAB", "ALT + SHIFT + TAB", "ALT + SHIFT + GRAVE"])
+})
+
 test("isWebAppClass gates browser-generated classes", () => {
   assert.equal(model.isWebAppClass("firefox"), false)
   assert.equal(model.isWebAppClass("opencode"), false)
