@@ -368,3 +368,8 @@ output (`"primary"`, or an output name). The dock model stays single: pins,
 order, hover magnification and auto-hide are shared, so all copies show the same
 dock and reveal together. What follows the screen the user acts on is the window
 preview, the drag ghost, the tooltip and the App Switcher.
+
+## Contributors
+
+- [Harsh Batheja](https://github.com/harsh-batheja) — macOS-style right-click
+  context menus, submenu dismissal, and app-grid pin mirroring.
