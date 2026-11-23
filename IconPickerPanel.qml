@@ -20,7 +20,7 @@ import "IconSearch.js" as IconSearch
 PanelWindow {
   id: root
 
-  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+  DockTranslations { id: strings }
 
   property bool open: false
   property string mode: "picker" // "picker" | "manage"
@@ -330,7 +330,7 @@ PanelWindow {
         root.previewQueued = ({})
         root.results = parsed
         if (parsed.length > 0)
-          root.statusText = strings.tn("picker.iconsFound", parsed.length).arg(Commons.I18n.formatNumber(parsed.length))
+          root.statusText = strings.tn("picker.iconsFound", parsed.length).arg(strings.formatNumber(parsed.length))
         else
           root.statusText = strings.t("picker.noMatches")
       }
@@ -557,7 +557,7 @@ PanelWindow {
         textFormat: Text.PlainText
               anchors.centerIn: parent
               text: {
-                var arrow = Commons.I18n.rightToLeft ? "›" : "‹"
+                var arrow = strings.isRightToLeft() ? "›" : "‹"
                 return root.fromManage ? strings.t("picker.backAllApps").arg(arrow) : strings.t("picker.backDockMenu").arg(arrow)
               }
               color: Color.foreground

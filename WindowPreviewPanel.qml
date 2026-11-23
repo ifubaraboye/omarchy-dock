@@ -1,3 +1,4 @@
+import "DockCompat.js" as DockCompat
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
@@ -90,8 +91,8 @@ PanelWindow {
     opacity: root.panelActive ? 1 : 0
     scale: root.panelActive ? 1 : 0.96
 
-    Behavior on opacity { NumberAnimation { duration: Style.duration(160); easing.type: Easing.OutCubic } }
-    Behavior on scale { NumberAnimation { duration: Style.duration(160); easing.type: Easing.OutCubic } }
+    Behavior on opacity { NumberAnimation { duration: DockCompat.duration(Style, 160); easing.type: Easing.OutCubic } }
+    Behavior on scale { NumberAnimation { duration: DockCompat.duration(Style, 160); easing.type: Easing.OutCubic } }
 
     Row {
       id: row

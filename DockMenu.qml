@@ -15,7 +15,7 @@ import "DockSubmenu.js" as DockSubmenu
 PanelWindow {
   id: root
 
-  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+  DockTranslations { id: strings }
 
   property var itemData: null
   property string iconSource: ""
