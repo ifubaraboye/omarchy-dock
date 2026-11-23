@@ -46,6 +46,15 @@ for file in *.qml; do
     "$file"
 done
 
+# Omarchy 4.0.x shells lack these 4.5-only APIs. Direct use outside the
+# compatibility helpers stops the plugin from loading there, so keep every
+# call routed through DockTranslations.qml / DockCompat.js.
+compat_hits=$(grep -lE 'Commons\.Translations|Commons\.I18n|Style\.duration\(' ./*.qml 2>/dev/null | grep -v '/DockTranslations\.qml$' || true)
+if [[ -n "$compat_hits" ]]; then
+  echo "direct 4.5-only shell API use: $compat_hits" >&2
+  fail=1
+fi
+
 # Belt and braces: qmllint flags some duplicates natively. Best-effort —
 # skip silently when the binary is absent (it is not on PATH by default).
 qmllint_bin="/usr/lib/qt6/bin/qmllint"

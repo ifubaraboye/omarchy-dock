@@ -1,3 +1,4 @@
+import "DockCompat.js" as DockCompat
 import QtQuick
 import Quickshell
 import Quickshell.Hyprland
@@ -11,7 +12,7 @@ import "IconResolver.js" as IconResolver
 Item {
   id: root
 
-  Commons.Translations { id: strings; directory: Qt.resolvedUrl("i18n") }
+  DockTranslations { id: strings }
 
   property var shell: null
   property var pluginRegistry: null
@@ -2125,18 +2126,18 @@ Item {
           // that made the top brighter than left/right/bottom.
 
           Behavior on x {
-            NumberAnimation { duration: Style.duration(root.autoHidden ? root.hideDuration : root.showDuration); easing.type: Easing.OutCubic }
+            NumberAnimation { duration: DockCompat.duration(Style, root.autoHidden ? root.hideDuration : root.showDuration); easing.type: Easing.OutCubic }
           }
           Behavior on y {
-            NumberAnimation { duration: Style.duration(root.autoHidden ? root.hideDuration : root.showDuration); easing.type: Easing.OutCubic }
+            NumberAnimation { duration: DockCompat.duration(Style, root.autoHidden ? root.hideDuration : root.showDuration); easing.type: Easing.OutCubic }
           }
           Behavior on width {
-            NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
+            NumberAnimation { duration: DockCompat.duration(Style, 250); easing.type: Easing.OutCubic }
           }
           Behavior on height {
-            NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
+            NumberAnimation { duration: DockCompat.duration(Style, 250); easing.type: Easing.OutCubic }
           }
-          Behavior on opacity { NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
+          Behavior on opacity { NumberAnimation { duration: DockCompat.duration(Style, 180); easing.type: Easing.OutCubic } }
 
           Item {
             id: dockRow
@@ -2150,10 +2151,10 @@ Item {
             rotation: root.vertical ? -90 : 0
 
             Behavior on width {
-              NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
+              NumberAnimation { duration: DockCompat.duration(Style, 250); easing.type: Easing.OutCubic }
             }
             Behavior on rotation {
-              NumberAnimation { duration: Style.duration(250); easing.type: Easing.OutCubic }
+              NumberAnimation { duration: DockCompat.duration(Style, 250); easing.type: Easing.OutCubic }
             }
 
             Repeater {
@@ -2193,7 +2194,7 @@ Item {
                 function cancelBounce() { dockItem.cancelLaunchBounce() }
 
                 Behavior on x {
-                  enabled: wrapper.animating && Style.duration(1) > 0
+                  enabled: wrapper.animating && DockCompat.duration(Style, 1) > 0
                   SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
                 }
 
@@ -2269,7 +2270,7 @@ Item {
                 property real targetLift: 0
                 property real targetOpacity: 1
                 Behavior on x {
-                  enabled: separatorItem.animating && Style.duration(1) > 0
+                  enabled: separatorItem.animating && DockCompat.duration(Style, 1) > 0
                   SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
                 }
                 Rectangle {
@@ -2306,7 +2307,7 @@ Item {
                 property alias targetLift: specialItem.targetLift
                 property alias targetOpacity: specialItem.targetOpacity
                 Behavior on x {
-                  enabled: specialWrapper.animating && Style.duration(1) > 0
+                  enabled: specialWrapper.animating && DockCompat.duration(Style, 1) > 0
                   SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 }
                 }
                 Component.onCompleted: {
@@ -2721,9 +2722,9 @@ Item {
       width: root.iconSize * root.ghostScale + 16
       height: root.iconSize * root.ghostScale + 16
       opacity: root.ghostOpacity
-      Behavior on x { enabled: Style.duration(1) > 0; SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
-      Behavior on y { enabled: Style.duration(1) > 0; SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
-      Behavior on opacity { NumberAnimation { duration: Style.duration(180); easing.type: Easing.OutCubic } }
+      Behavior on x { enabled: DockCompat.duration(Style, 1) > 0; SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
+      Behavior on y { enabled: DockCompat.duration(Style, 1) > 0; SpringAnimation { spring: 4.5; damping: 0.95; mass: 1 } }
+      Behavior on opacity { NumberAnimation { duration: DockCompat.duration(Style, 180); easing.type: Easing.OutCubic } }
 
       Rectangle {
         anchors.centerIn: parent

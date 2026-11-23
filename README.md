@@ -59,13 +59,14 @@ The dock stores pins and auto-hide preference in:
 
 ## Requirements and removal
 
-This plugin requires Omarchy 4.5 or newer — it relies on the shell's motion,
+This plugin targets Omarchy 4.5 or newer. It uses the shell's motion,
 translation, and RTL APIs (`Style.duration`, `Commons.Translations`,
-`Util.readingKey`) — plus `bash`, `curl`, `python3`, coreutils `timeout`,
-ImageMagick (`magick` or `convert` and `identify`), and `xdg-open` for the
-optional custom-icon helper. `wl-clipboard` (`wl-paste`) is only needed if you
-want to paste into the icon picker's text fields; the rest of the picker works
-without it.
+`Util.readingKey`) when available and falls back to plain millisecond
+durations and the bundled English translation table on older shells. It also
+needs `bash`, `curl`, `python3`, coreutils `timeout`, ImageMagick (`magick` or
+`convert` and `identify`), and `xdg-open` for the optional custom-icon helper.
+`wl-clipboard` (`wl-paste`) is only needed if you want to paste into the icon
+picker's text fields; the rest of the picker works without it.
 
 ### Picker text input, previews, and thumbnail cache
 
